@@ -1,0 +1,85 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.field > span,
+.field label,
+.field-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.field input,
+.field select,
+.field textarea,
+.filter-bar input,
+.filter-bar select,
+.filter-bar textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-radius: 14px;
+  outline: none;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  color: var(--text);
+}
+
+.field textarea,
+.filter-bar textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
+.filter-bar input:focus,
+.filter-bar select:focus,
+.filter-bar textarea:focus,
+.topbar-search:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.filter-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.filter-bar input {
+  min-width: 240px;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.checkbox-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: white;
+}
+
+.checkbox-card input {
+  width: auto;
+  min-width: 0;
+  padding: 0;
+}
+
+@media (max-width: 780px) {
+  .checkbox-grid {
+    grid-template-columns: 1fr;
+  }
+}
