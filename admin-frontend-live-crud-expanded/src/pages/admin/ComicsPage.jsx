@@ -1,22 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CrudModal from '../../components/CrudModal';
 import PageTitleBar from '../../components/PageTitleBar';
 import { StatCardsRow } from '../../components/StatCardsRow';
 import EmptyState from '../../components/EmptyState';
-import { apiRequest } from '../../services/api';
+import { apiRequest, getImageUrl } from '../../services/api';
 import { formatDate, formatNumber, slugify, statusChip, toArray } from '../../utils/adminHelpers';
 
 const emptyForm = {
   author_id: '',
   title: '',
   slug: '',
-  cover_image_url: '',
-  banner_image_url: '',
   summary: '',
   publication_status: 'draft',
   visibility_status: 'public',
   age_rating: 'all',
   genre_ids: [],
+  cover_file: null,
+  current_cover_image_url: '',
 };
 
 export default function ComicsPage() {
@@ -62,9 +63,30 @@ export default function ComicsPage() {
 
   const stats = [
     { label: 'Tổng truyện', value: formatNumber(data.items.length), icon: '📚', tone: 'mint' },
-    { label: 'Đang cập nhật', value: formatNumber(data.items.filter((item) => item.publication_status === 'ongoing').length), icon: '🌀', tone: 'green' },
-    { label: 'Hoàn thành', value: formatNumber(data.items.filter((item) => item.publication_status === 'completed').length), icon: '✔', tone: 'blue' },
-    { label: 'Tổng lượt xem', value: formatNumber(data.items.reduce((sum, item) => sum + Number(item.total_views || 0), 0)), icon: '👁', tone: 'gold' },
+    {
+      label: 'Đang cập nhật',
+      value: formatNumber(
+        data.items.filter((item) => item.publication_status === 'ongoing').length
+      ),
+      icon: '🌀',
+      tone: 'green',
+    },
+    {
+      label: 'Hoàn thành',
+      value: formatNumber(
+        data.items.filter((item) => item.publication_status === 'completed').length
+      ),
+      icon: '✔',
+      tone: 'blue',
+    },
+    {
+      label: 'Tổng lượt xem',
+      value: formatNumber(
+        data.items.reduce((sum, item) => sum + Number(item.total_views || 0), 0)
+      ),
+      icon: '👁',
+      tone: 'gold',
+    },
   ];
 
   const openCreate = () => {
@@ -79,8 +101,6 @@ export default function ComicsPage() {
       author_id: item.author_id || '',
       title: item.title || '',
       slug: item.slug || '',
-      cover_image_url: item.cover_image_url || '',
-      banner_image_url: item.banner_image_url || '',
       summary: item.summary || '',
       publication_status: item.publication_status || 'draft',
       visibility_status: item.visibility_status || 'public',
@@ -89,6 +109,8 @@ export default function ComicsPage() {
         .split(',')
         .map((value) => Number(value))
         .filter(Boolean),
+      cover_file: null,
+      current_cover_image_url: item.cover_image_url || '',
     });
     setModalOpen(true);
   };
@@ -96,23 +118,35 @@ export default function ComicsPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = {
-        ...form,
-        author_id: form.author_id ? Number(form.author_id) : null,
-        genre_ids: form.genre_ids.map(Number).filter(Boolean),
-      };
+      const formData = new FormData();
+
+      formData.append('author_id', form.author_id ? Number(form.author_id) : '');
+      formData.append('title', form.title || '');
+      formData.append('slug', form.slug || '');
+      formData.append('summary', form.summary || '');
+      formData.append('publication_status', form.publication_status || 'draft');
+      formData.append('visibility_status', form.visibility_status || 'public');
+      formData.append('age_rating', form.age_rating || 'all');
+      formData.append('genre_ids', JSON.stringify(form.genre_ids.map(Number).filter(Boolean)));
+
+      if (form.cover_file) {
+        formData.append('cover_image', form.cover_file);
+      }
+
       if (editingItem) {
         await apiRequest(`/api/admin/comics/${editingItem.id}`, {
           method: 'PUT',
-          body: JSON.stringify(payload),
+          body: formData,
         });
       } else {
         await apiRequest('/api/admin/comics', {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: formData,
         });
       }
+
       setModalOpen(false);
+      setForm(emptyForm);
       await loadData();
     } catch (error) {
       alert(error.message || 'Lưu truyện thất bại');
@@ -136,7 +170,11 @@ export default function ComicsPage() {
       <PageTitleBar
         title="Quản lý Truyện tranh"
         description="Quản lý toàn bộ truyện tranh trong hệ thống bằng dữ liệu thật từ API"
-        action={<button className="teal-btn" onClick={openCreate}>+ Thêm truyện mới</button>}
+        action={
+          <button className="teal-btn" onClick={openCreate}>
+            + Thêm truyện mới
+          </button>
+        }
       />
 
       <StatCardsRow items={stats} />
@@ -145,8 +183,13 @@ export default function ComicsPage() {
         <div className="readdy-toolbar toolbar-comics">
           <div className="readdy-search-input is-wide">
             <span>⌕</span>
-            <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="Tìm kiếm theo tên truyện, tác giả..." />
+            <input
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder="Tìm kiếm theo tên truyện, tác giả..."
+            />
           </div>
+
           <select value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="all">Tất cả trạng thái</option>
             <option value="ongoing">Đang cập nhật</option>
@@ -157,11 +200,28 @@ export default function ComicsPage() {
         </div>
       </div>
 
-      {errorText ? <div className="empty-card"><div className="empty-title">{errorText}</div></div> : null}
-      {loading ? <div className="empty-card"><div className="empty-title">Đang tải dữ liệu truyện...</div></div> : null}
+      {errorText ? (
+        <div className="empty-card">
+          <div className="empty-title">{errorText}</div>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="empty-card">
+          <div className="empty-title">Đang tải dữ liệu truyện...</div>
+        </div>
+      ) : null}
 
       {!loading && filteredItems.length === 0 ? (
-        <EmptyState title="Chưa có truyện nào" description="Tạo truyện đầu tiên để bắt đầu quản lý nội dung." action={<button className="teal-btn" onClick={openCreate}>Thêm truyện</button>} />
+        <EmptyState
+          title="Chưa có truyện nào"
+          description="Tạo truyện đầu tiên để bắt đầu quản lý nội dung."
+          action={
+            <button className="teal-btn" onClick={openCreate}>
+              Thêm truyện
+            </button>
+          }
+        />
       ) : null}
 
       {!loading && filteredItems.length > 0 ? (
@@ -185,7 +245,17 @@ export default function ComicsPage() {
                   <tr key={item.id}>
                     <td>
                       <div className="readdy-comic-row">
-                        <div className="comic-thumb">{(item.title || 'C').slice(0, 1)}</div>
+                        <div className="comic-thumb" style={{ overflow: 'hidden' }}>
+                          {item.cover_image_url ? (
+                            <img
+                              src={getImageUrl(item.cover_image_url)}
+                              alt={item.title}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                          ) : (
+                            (item.title || 'C').slice(0, 1)
+                          )}
+                        </div>
                         <div className="readdy-user-copy">
                           <strong>{item.title}</strong>
                           <span>ID: {item.id}</span>
@@ -194,14 +264,22 @@ export default function ComicsPage() {
                     </td>
                     <td>{item.author_name || '-'}</td>
                     <td>{item.genres || '-'}</td>
-                    <td><span className={`readdy-chip ${statusChip(item.publication_status)}`}>{item.publication_status}</span></td>
+                    <td>
+                      <span className={`readdy-chip ${statusChip(item.publication_status)}`}>
+                        {item.publication_status}
+                      </span>
+                    </td>
                     <td>{formatNumber(item.total_chapters)}</td>
                     <td>{formatNumber(item.total_views)}</td>
                     <td>{formatDate(item.created_at)}</td>
                     <td>
                       <div className="readdy-actions-inline">
-                        <button className="icon-btn teal" onClick={() => openEdit(item)}>✎</button>
-                        <button className="icon-btn red" onClick={() => handleDelete(item)}>🗑</button>
+                        <button className="icon-btn teal" onClick={() => openEdit(item)}>
+                          ✎
+                        </button>
+                        <button className="icon-btn red" onClick={() => handleDelete(item)}>
+                          🗑
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -218,61 +296,178 @@ export default function ComicsPage() {
         title={editingItem ? 'Chỉnh sửa truyện' : 'Thêm truyện mới'}
         footer={
           <>
-            <button className="secondary-btn" onClick={() => setModalOpen(false)}>Hủy</button>
-            <button className="teal-btn" disabled={saving} onClick={handleSave}>{saving ? 'Đang lưu...' : 'Lưu truyện'}</button>
+            <button className="secondary-btn" onClick={() => setModalOpen(false)}>
+              Hủy
+            </button>
+            <button className="teal-btn" disabled={saving} onClick={handleSave}>
+              {saving ? 'Đang lưu...' : 'Lưu truyện'}
+            </button>
           </>
         }
       >
         <div className="form-grid-two">
           <label>
             Tác giả
-            <select value={form.author_id} onChange={(event) => setForm((prev) => ({ ...prev, author_id: event.target.value }))}>
+            <select
+              value={form.author_id}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, author_id: event.target.value }))
+              }
+            >
               <option value="">Chưa chọn</option>
-              {data.authors.map((author) => <option key={author.id} value={author.id}>{author.name}</option>)}
+              {data.authors.map((author) => (
+                <option key={author.id} value={author.id}>
+                  {author.name}
+                </option>
+              ))}
             </select>
           </label>
+
           <label>
             Tên truyện
-            <input value={form.title} onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value, slug: prev.slug || slugify(event.target.value) }))} />
+            <input
+              value={form.title}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  title: event.target.value,
+                  slug: prev.slug || slugify(event.target.value),
+                }))
+              }
+            />
           </label>
+
           <label>
             Slug
-            <input value={form.slug} onChange={(event) => setForm((prev) => ({ ...prev, slug: slugify(event.target.value) }))} />
+            <input
+              value={form.slug}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, slug: slugify(event.target.value) }))
+              }
+            />
           </label>
+
           <label>
             Trạng thái phát hành
-            <select value={form.publication_status} onChange={(event) => setForm((prev) => ({ ...prev, publication_status: event.target.value }))}>
+            <select
+              value={form.publication_status}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  publication_status: event.target.value,
+                }))
+              }
+            >
               <option value="draft">draft</option>
               <option value="ongoing">ongoing</option>
               <option value="completed">completed</option>
               <option value="hiatus">hiatus</option>
             </select>
           </label>
+
           <label>
             Hiển thị
-            <select value={form.visibility_status} onChange={(event) => setForm((prev) => ({ ...prev, visibility_status: event.target.value }))}>
+            <select
+              value={form.visibility_status}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  visibility_status: event.target.value,
+                }))
+              }
+            >
               <option value="public">public</option>
               <option value="private">private</option>
               <option value="hidden">hidden</option>
             </select>
           </label>
+
           <label>
             Độ tuổi
-            <select value={form.age_rating} onChange={(event) => setForm((prev) => ({ ...prev, age_rating: event.target.value }))}>
+            <select
+              value={form.age_rating}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, age_rating: event.target.value }))
+              }
+            >
               <option value="all">all</option>
               <option value="teen">teen</option>
               <option value="mature">mature</option>
             </select>
           </label>
+
           <label className="form-span-2">
             Thể loại
-            <select multiple value={form.genre_ids.map(String)} onChange={(event) => setForm((prev) => ({ ...prev, genre_ids: Array.from(event.target.selectedOptions).map((option) => Number(option.value)) }))}>
-              {data.genres.map((genre) => <option key={genre.id} value={genre.id}>{genre.name}</option>)}
+            <select
+              multiple
+              value={form.genre_ids.map(String)}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  genre_ids: Array.from(event.target.selectedOptions).map((option) =>
+                    Number(option.value)
+                  ),
+                }))
+              }
+            >
+              {data.genres.map((genre) => (
+                <option key={genre.id} value={genre.id}>
+                  {genre.name}
+                </option>
+              ))}
             </select>
           </label>
-          <label className="form-span-2">Cover URL<input value={form.cover_image_url} onChange={(event) => setForm((prev) => ({ ...prev, cover_image_url: event.target.value }))} /></label>
-          <label className="form-span-2">Banner URL<input value={form.banner_image_url} onChange={(event) => setForm((prev) => ({ ...prev, banner_image_url: event.target.value }))} /></label>
-          <label className="form-span-2">Tóm tắt<textarea rows="4" value={form.summary} onChange={(event) => setForm((prev) => ({ ...prev, summary: event.target.value }))} /></label>
+
+          <label className="form-span-2">
+            Ảnh truyện
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  cover_file: event.target.files?.[0] || null,
+                }))
+              }
+            />
+
+            {form.cover_file ? (
+              <img
+                src={URL.createObjectURL(form.cover_file)}
+                alt="cover preview"
+                style={{
+                  width: 120,
+                  height: 160,
+                  objectFit: 'cover',
+                  borderRadius: 12,
+                  marginTop: 10,
+                }}
+              />
+            ) : form.current_cover_image_url ? (
+              <img
+                src={getImageUrl(form.current_cover_image_url)}
+                alt="cover current"
+                style={{
+                  width: 120,
+                  height: 160,
+                  objectFit: 'cover',
+                  borderRadius: 12,
+                  marginTop: 10,
+                }}
+              />
+            ) : null}
+          </label>
+
+          <label className="form-span-2">
+            Tóm tắt
+            <textarea
+              rows="4"
+              value={form.summary}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, summary: event.target.value }))
+              }
+            />
+          </label>
         </div>
       </CrudModal>
     </div>

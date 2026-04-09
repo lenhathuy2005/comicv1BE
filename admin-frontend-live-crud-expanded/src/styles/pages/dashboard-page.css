@@ -1,9 +1,10 @@
-
 .dashboard-hero h1 {
   margin: 0 0 12px;
-  font-size: 34px;
-  line-height: 1.02;
+  font-size: clamp(26px, 4vw, 34px);
+  line-height: 1.08;
   letter-spacing: -0.05em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .hero-badge {
@@ -18,6 +19,8 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   margin-bottom: 14px;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .hero-text {
@@ -25,6 +28,8 @@
   margin: 0;
   color: var(--text-soft);
   line-height: 1.65;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .hero-actions {
@@ -41,32 +46,39 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .hero-meta-card span {
   color: var(--text-soft);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .hero-meta-card strong {
-  font-size: 28px;
+  font-size: clamp(22px, 3vw, 28px);
   color: var(--primary-2);
+  overflow-wrap: anywhere;
 }
 
 .dashboard-main-grid .panel {
   min-height: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .ranking-chart {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
 }
 
 .ranking-bar-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .ranking-bar-top {
@@ -74,6 +86,14 @@
   justify-content: space-between;
   gap: 12px;
   font-size: 13px;
+  min-width: 0;
+}
+
+.ranking-bar-top span,
+.ranking-bar-top strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ranking-bar-top span {
@@ -103,6 +123,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+  min-width: 0;
 }
 
 .summary-item {
@@ -113,15 +134,18 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .summary-item span {
   color: var(--text-soft);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .summary-item strong {
-  font-size: 24px;
+  font-size: clamp(20px, 3vw, 24px);
+  overflow-wrap: anywhere;
 }
 
 .comic-list,
@@ -130,6 +154,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
 
 .comic-list-item,
@@ -142,11 +167,14 @@
   border-radius: 18px;
   background: #f8fbff;
   border: 1px solid var(--border-soft);
+  min-width: 0;
 }
 
 .comic-title,
 .guild-name {
   font-weight: 700;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .comic-meta,
@@ -155,6 +183,8 @@
   font-size: 12px;
   color: var(--text-soft);
   margin-top: 4px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .guild-right {
@@ -162,6 +192,8 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .feature-list {
@@ -169,6 +201,15 @@
   padding-left: 18px;
   color: var(--text-soft);
   line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.panel-hero,
+.dashboard-main-grid,
+.panel,
+.panel-header,
+.panel-body {
+  min-width: 0;
 }
 
 @media (max-width: 980px) {
@@ -185,5 +226,48 @@
 @media (max-width: 900px) {
   .summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .comic-list-item,
+  .guild-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .guild-right {
+    width: 100%;
+    text-align: left;
+    flex-shrink: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-hero h1 {
+    margin-bottom: 10px;
+  }
+
+  .hero-badge {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+
+  .hero-meta-card {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .summary-item {
+    padding: 13px;
+    border-radius: 16px;
+  }
+
+  .comic-list-item,
+  .guild-row {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .feature-list {
+    padding-left: 16px;
   }
 }

@@ -1432,6 +1432,184 @@ async function deleteChapterAdmin(id) {
   return { id: Number(id), deleted: true };
 }
 
+async function addChapterImagesAdmin(chapterId, images) {
+  if (!chapterId) throw new ApiError(400, 'Thiếu chapter id');
+  if (!Array.isArray(images) || images.length === 0) {
+    throw new ApiError(400, 'Chưa có ảnh để thêm');
+  }
+
+  return transaction(async (conn) => {
+    const chapterRows = await queryWithConn(
+      conn,
+      `SELECT id
+       FROM chapters
+       WHERE id = :chapterId AND deleted_at IS NULL
+       LIMIT 1`,
+      { chapterId }
+    );
+
+    if (!chapterRows.length) throw new ApiError(404, 'Không tìm thấy chapter');
+
+    const maxOrderRows = await queryWithConn(
+      conn,
+      `SELECT COALESCE(MAX(display_order), 0) AS max_order
+       FROM chapter_images
+       WHERE chapter_id = :chapterId`,
+      { chapterId }
+    );
+
+    let nextOrder = Number(maxOrderRows[0]?.max_order || 0) + 1;
+
+    for (const image of images) {
+      if (!image?.image_url) continue;
+
+      await conn.query(
+        `INSERT INTO chapter_images (chapter_id, image_url, display_order)
+         VALUES (:chapter_id, :image_url, :display_order)`,
+        {
+          chapter_id: chapterId,
+          image_url: image.image_url,
+          display_order: nextOrder,
+        }
+      );
+
+      nextOrder += 1;
+    }
+
+    return getChapterAdminDetail(chapterId);
+  });
+}
+
+async function replaceChapterImageAdmin(imageId, imageUrl) {
+  if (!imageId) throw new ApiError(400, 'Thiếu image id');
+  if (!imageUrl) throw new ApiError(400, 'Thiếu ảnh mới');
+
+  return transaction(async (conn) => {
+    const rows = await queryWithConn(
+      conn,
+      `SELECT id, chapter_id
+       FROM chapter_images
+       WHERE id = :imageId
+       LIMIT 1`,
+      { imageId }
+    );
+
+    if (!rows.length) throw new ApiError(404, 'Không tìm thấy ảnh chapter');
+
+    const chapterId = rows[0].chapter_id;
+
+    await conn.query(
+      `UPDATE chapter_images
+       SET image_url = :image_url
+       WHERE id = :imageId`,
+      {
+        image_url: imageUrl,
+        imageId,
+      }
+    );
+
+    return getChapterAdminDetail(chapterId);
+  });
+}
+
+async function deleteChapterImageAdmin(imageId) {
+  if (!imageId) throw new ApiError(400, 'Thiếu image id');
+
+  return transaction(async (conn) => {
+    const rows = await queryWithConn(
+      conn,
+      `SELECT id, chapter_id
+       FROM chapter_images
+       WHERE id = :imageId
+       LIMIT 1`,
+      { imageId }
+    );
+
+    if (!rows.length) throw new ApiError(404, 'Không tìm thấy ảnh chapter');
+
+    const chapterId = rows[0].chapter_id;
+
+    await conn.query(
+      `DELETE FROM chapter_images WHERE id = :imageId`,
+      { imageId }
+    );
+
+    const remainRows = await queryWithConn(
+      conn,
+      `SELECT id
+       FROM chapter_images
+       WHERE chapter_id = :chapterId
+       ORDER BY display_order ASC, id ASC`,
+      { chapterId }
+    );
+
+    if (remainRows.length > 0) {
+      await conn.query(
+        `UPDATE chapter_images
+         SET display_order = display_order + 100000
+         WHERE chapter_id = :chapterId`,
+        { chapterId }
+      );
+
+      for (let i = 0; i < remainRows.length; i += 1) {
+        await conn.query(
+          `UPDATE chapter_images
+           SET display_order = :display_order
+           WHERE id = :id`,
+          {
+            display_order: i + 1,
+            id: remainRows[i].id,
+          }
+        );
+      }
+    }
+
+    return getChapterAdminDetail(chapterId);
+  });
+}
+
+async function reorderChapterImagesAdmin(chapterId, images) {
+  if (!chapterId) throw new ApiError(400, 'Thiếu chapter id');
+  if (!Array.isArray(images) || images.length === 0) {
+    throw new ApiError(400, 'Thiếu danh sách ảnh');
+  }
+
+  return transaction(async (conn) => {
+    const chapterRows = await queryWithConn(
+      conn,
+      `SELECT id
+       FROM chapters
+       WHERE id = :chapterId AND deleted_at IS NULL
+       LIMIT 1`,
+      { chapterId }
+    );
+
+    if (!chapterRows.length) throw new ApiError(404, 'Không tìm thấy chapter');
+
+    await conn.query(
+      `UPDATE chapter_images
+       SET display_order = display_order + 100000
+       WHERE chapter_id = :chapterId`,
+      { chapterId }
+    );
+
+    for (const item of images) {
+      await conn.query(
+        `UPDATE chapter_images
+         SET display_order = :display_order
+         WHERE id = :id AND chapter_id = :chapterId`,
+        {
+          display_order: Number(item.display_order),
+          id: Number(item.id),
+          chapterId,
+        }
+      );
+    }
+
+    return getChapterAdminDetail(chapterId);
+  });
+}
+
 module.exports = {
   getDashboard,
   listGenres,
@@ -1489,4 +1667,8 @@ module.exports = {
   createChapterAdmin,
   updateChapterAdmin,
   deleteChapterAdmin,
+  addChapterImagesAdmin,
+  replaceChapterImageAdmin,
+  deleteChapterImageAdmin,
+  reorderChapterImagesAdmin,
 };

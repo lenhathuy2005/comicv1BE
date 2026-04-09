@@ -1,6 +1,7 @@
 const express = require('express');
 const controller = require('../controllers/admin.controller');
 const { requireAuth, requireRole } = require('../../../middlewares/auth.middleware');
+const upload = require('../../../middlewares/upload.middleware');
 
 const router = express.Router();
 
@@ -65,14 +66,20 @@ router.post('/rankings/:type/snapshot', controller.createRankingSnapshot);
 
 router.get('/authors', controller.listAuthors);
 router.get('/comics', controller.listComics);
-router.post('/comics', controller.createComic);
-router.put('/comics/:id', controller.updateComic);
+router.post('/comics', upload.single('cover_image'), controller.createComic);
+router.put('/comics/:id', upload.single('cover_image'), controller.updateComic);
 router.delete('/comics/:id', controller.deleteComic);
 
 router.get('/chapters', controller.listChapters);
 router.get('/chapters/:id', controller.getChapterDetail);
-router.post('/chapters', controller.createChapter);
+router.post('/chapters', upload.array('images', 2000), controller.createChapter);
 router.put('/chapters/:id', controller.updateChapter);
 router.delete('/chapters/:id', controller.deleteChapter);
+
+/* ảnh chapter */
+router.post('/chapters/:id/images', upload.array('images', 2000), controller.addChapterImages);
+router.put('/chapter-images/:imageId', upload.single('image'), controller.replaceChapterImage);
+router.delete('/chapter-images/:imageId', controller.deleteChapterImage);
+router.put('/chapters/:id/images/reorder', controller.reorderChapterImages);
 
 module.exports = router;
