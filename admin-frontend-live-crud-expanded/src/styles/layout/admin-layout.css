@@ -1,8 +1,7 @@
-
 .admin-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100dvh;
   width: 100%;
   max-width: 100%;
   overflow: hidden;
@@ -12,7 +11,7 @@
 .sidebar {
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100dvh;
   background: linear-gradient(180deg, #0b1223 0%, #111827 48%, #151f35 100%);
   color: var(--text-white);
   padding: 18px 16px;
@@ -58,7 +57,6 @@
   color: rgba(248, 250, 252, 0.58);
   font-size: 12px;
 }
-
 
 .sidebar-scrollable {
   flex: 1;
@@ -157,7 +155,11 @@
 }
 
 .sidebar-avatar {
-  background: linear-gradient(135deg, rgba(219, 234, 254, 0.28), rgba(191, 219, 254, 0.12));
+  background: linear-gradient(
+    135deg,
+    rgba(219, 234, 254, 0.28),
+    rgba(191, 219, 254, 0.12)
+  );
   color: white;
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
@@ -175,19 +177,16 @@
   max-width: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-}
-
-.main-shell {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .topbar {
   min-height: var(--topbar-height);
-  position: sticky;
-  top: 0;
+  position: relative;
+  top: auto;
   z-index: 10;
   width: 100%;
   max-width: 100%;
@@ -200,6 +199,7 @@
   background: #ffffff;
   border-bottom: 1px solid var(--border-soft);
   backdrop-filter: none;
+  flex-shrink: 0;
 }
 
 .topbar-left {
@@ -270,11 +270,14 @@
 }
 
 .main-content {
+  flex: 0 0 auto;
+  min-height: 0;
   padding: 20px;
   min-width: 0;
   width: 100%;
   max-width: 100%;
   overflow-x: auto;
+  overflow-y: visible;
 }
 
 @media (max-width: 1200px) {
@@ -303,7 +306,7 @@
   .sidebar {
     position: sticky;
     top: 0;
-    height: 100vh;
+    height: 100dvh;
     padding: 14px 10px;
   }
 
@@ -375,6 +378,10 @@
     display: none;
   }
 
+  .main-shell {
+    height: 100dvh;
+  }
+
   .topbar {
     padding: 12px;
   }
@@ -387,6 +394,7 @@
     padding: 12px;
   }
 }
+
 .topbar-title,
 .topbar-subtitle,
 .nav-link span,

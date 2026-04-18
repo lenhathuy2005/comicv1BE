@@ -17,6 +17,7 @@ const missionRoutes = require('./modules/missions/routes/mission.routes');
 const checkinRoutes = require('./modules/checkin/routes/checkin.routes');
 const profileRoutes = require('./modules/profile/routes/profile.routes');
 const inventoryRoutes = require('./modules/inventory/routes/inventory.routes');
+const paymentRoutes = require('./modules/payments/routes/payment.routes');
 
 const router = express.Router();
 
@@ -37,5 +38,6 @@ router.use('/profile', profileRoutes);
 router.use('/missions', missionRoutes);
 router.use('/checkin', checkinRoutes);
 router.use('/inventory', inventoryRoutes);
+router.use('/payments', paymentRoutes);
 
 module.exports = router;
