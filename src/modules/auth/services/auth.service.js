@@ -410,6 +410,112 @@ async function verifyEmail(token) {
   });
 }
 
+
+
+async function changePassword(userId, currentPassword, newPassword) {
+  return transaction(async (conn) => {
+    const userRows = await queryWithConn(
+      conn,
+      `SELECT id, password_hash FROM users WHERE id = :userId LIMIT 1`,
+      { userId }
+    );
+
+    if (!userRows.length) throw new ApiError(404, 'User not found');
+
+    const isMatch = await comparePassword(currentPassword, userRows[0].password_hash);
+    if (!isMatch) throw new ApiError(400, 'Mật khẩu hiện tại không đúng');
+
+    const newHash = await hashPassword(newPassword);
+    await conn.execute(`UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?`, [newHash, userId]);
+    await conn.execute(
+      `UPDATE auth_tokens
+       SET revoked_at = NOW()
+       WHERE user_id = ?
+         AND token_type IN ('refresh_token', 'session_token')
+         AND revoked_at IS NULL`,
+      [userId]
+    );
+
+    return { message: 'Đổi mật khẩu thành công. Các phiên đăng nhập cũ đã bị thu hồi.' };
+  });
+}
+
+async function getSecurityOverview(userId) {
+  const [sessions, tokenStats] = await Promise.all([
+    query(
+      `SELECT id, token_value, ip_address, user_agent, expires_at, created_at, updated_at
+       FROM auth_tokens
+       WHERE user_id = :userId
+         AND token_type = 'session_token'
+         AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY created_at DESC`,
+      { userId }
+    ),
+    query(
+      `SELECT
+          SUM(CASE WHEN token_type = 'refresh_token' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) THEN 1 ELSE 0 END) AS active_refresh_tokens,
+          SUM(CASE WHEN token_type = 'session_token' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) THEN 1 ELSE 0 END) AS active_sessions
+       FROM auth_tokens
+       WHERE user_id = :userId`,
+      { userId }
+    ),
+  ]);
+
+  return {
+    active_session_count: Number(tokenStats[0]?.active_sessions || 0),
+    active_refresh_token_count: Number(tokenStats[0]?.active_refresh_tokens || 0),
+    sessions: sessions.map((session) => ({
+      id: Number(session.id),
+      session_token: session.token_value,
+      ip_address: session.ip_address,
+      user_agent: session.user_agent,
+      created_at: session.created_at,
+      expires_at: session.expires_at,
+      last_updated_at: session.updated_at,
+    })),
+  };
+}
+
+async function revokeSession(userId, sessionToken) {
+  if (!sessionToken) throw new ApiError(400, 'sessionToken là bắt buộc');
+
+  const result = await query(
+    `UPDATE auth_tokens
+     SET revoked_at = NOW()
+     WHERE user_id = :userId
+       AND token_type = 'session_token'
+       AND token_value = :sessionToken
+       AND revoked_at IS NULL`,
+    { userId, sessionToken }
+  );
+
+  return { revoked: true, session_token: sessionToken, result };
+}
+
+async function revokeOtherSessions(userId, currentSessionToken = null) {
+  await query(
+    `UPDATE auth_tokens
+     SET revoked_at = NOW()
+     WHERE user_id = :userId
+       AND token_type = 'session_token'
+       AND revoked_at IS NULL
+       AND (:currentSessionToken IS NULL OR token_value <> :currentSessionToken)`,
+    { userId, currentSessionToken }
+  );
+
+  await query(
+    `UPDATE auth_tokens
+     SET revoked_at = NOW()
+     WHERE user_id = :userId
+       AND token_type = 'refresh_token'
+       AND revoked_at IS NULL`,
+    { userId }
+  );
+
+  return { revoked_other_sessions: true };
+}
+
 module.exports = {
   register,
   login,
@@ -419,4 +525,8 @@ module.exports = {
   refreshToken,
   logout,
   verifyEmail,
+  changePassword,
+  getSecurityOverview,
+  revokeSession,
+  revokeOtherSessions,
 };

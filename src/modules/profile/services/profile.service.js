@@ -152,12 +152,17 @@ async function getProfileStats(userId) {
     `SELECT COUNT(*) AS total FROM daily_checkins WHERE user_id = :userId`,
     { userId }
   );
+  const [readingCountRow] = await query(
+    `SELECT COUNT(*) AS total FROM reading_history WHERE user_id = :userId`,
+    { userId }
+  );
 
   return {
     follow_count: Number(followCountRow?.total || 0),
     inventory_count: Number(inventoryCountRow?.total || 0),
     mission_claimed_count: Number(missionClaimedCountRow?.total || 0),
     checkin_count: Number(checkinCountRow?.total || 0),
+    reading_history_count: Number(readingCountRow?.total || 0),
   };
 }
 
@@ -437,11 +442,48 @@ async function getMyFollows(userId) {
       c.cover_image_url,
       c.publication_status,
       c.total_views,
-      c.total_follows
+      c.total_follows,
+      (
+        SELECT MAX(rh.last_read_at)
+        FROM reading_history rh
+        WHERE rh.user_id = :userId
+          AND rh.comic_id = f.comic_id
+      ) AS last_read_at
     FROM follows f
     INNER JOIN comics c ON c.id = f.comic_id
     WHERE f.user_id = :userId
-    ORDER BY f.created_at DESC
+    ORDER BY COALESCE(last_read_at, f.created_at) DESC, f.created_at DESC
+    `,
+    { userId }
+  );
+
+  return { items: rows };
+}
+
+async function getMyReadingHistory(userId, limit = 30) {
+  const safeLimit = Math.max(1, Math.min(Number(limit || 30), 100));
+
+  const rows = await query(
+    `
+    SELECT
+      rh.id,
+      rh.comic_id,
+      rh.chapter_id,
+      rh.last_page_number,
+      rh.progress_percent,
+      rh.last_read_at,
+      c.title AS comic_title,
+      c.slug AS comic_slug,
+      c.cover_image_url,
+      ch.chapter_number,
+      ch.title AS chapter_title,
+      ch.slug AS chapter_slug
+    FROM reading_history rh
+    INNER JOIN comics c ON c.id = rh.comic_id
+    INNER JOIN chapters ch ON ch.id = rh.chapter_id
+    WHERE rh.user_id = :userId
+    ORDER BY rh.last_read_at DESC
+    LIMIT ${safeLimit}
     `,
     { userId }
   );
@@ -470,5 +512,6 @@ module.exports = {
   updateMyProfile,
   getMyActivities,
   getMyFollows,
+  getMyReadingHistory,
   getMyGuild,
 };

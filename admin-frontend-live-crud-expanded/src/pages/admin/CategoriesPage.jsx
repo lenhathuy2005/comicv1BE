@@ -52,7 +52,7 @@ export default function CategoriesPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = { ...form, slug: slugify(form.slug || form.name) };
+      const payload = { ...form, slug: slugify(form.name) || form.slug || '' };
       if (editingItem) {
         await apiRequest(`/api/admin/genres/${editingItem.id}`, { method: 'PUT', body: JSON.stringify(payload) });
       } else {
@@ -97,8 +97,7 @@ export default function CategoriesPage() {
                 <div className="readdy-square tone-teal">🏷</div>
                 <div className="readdy-feature-copy">
                   <h3>{item.name}</h3>
-                  <span>/{item.slug}</span>
-                </div>
+                                  </div>
                 <span className="readdy-chip chip-green">Hoạt động</span>
               </div>
               <p className="readdy-feature-text">{item.description || 'Chưa có mô tả'}</p>
@@ -116,8 +115,7 @@ export default function CategoriesPage() {
       ) : null}
       <CrudModal open={open} onClose={() => setOpen(false)} title={editingItem ? 'Chỉnh sửa thể loại' : 'Thêm thể loại mới'} footer={<><button className="secondary-btn" onClick={() => setOpen(false)}>Hủy</button><button className="teal-btn" disabled={saving} onClick={handleSave}>{saving ? 'Đang lưu...' : 'Lưu thể loại'}</button></>}>
         <div className="form-grid-two">
-          <label>Tên thể loại<input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value, slug: prev.slug || slugify(event.target.value) }))} /></label>
-          <label>Slug<input value={form.slug} onChange={(event) => setForm((prev) => ({ ...prev, slug: slugify(event.target.value) }))} /></label>
+          <label className="form-span-2">Tên thể loại<input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} /></label>
           <label className="form-span-2">Mô tả<textarea rows="4" value={form.description} onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))} /></label>
         </div>
       </CrudModal>

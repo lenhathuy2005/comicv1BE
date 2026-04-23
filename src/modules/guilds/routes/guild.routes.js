@@ -5,6 +5,7 @@ const { requireAuth } = require('../../../middlewares/auth.middleware');
 const router = express.Router();
 
 router.get('/', controller.listGuilds);
+router.get('/creation-requirements', requireAuth, controller.getGuildCreationRequirements);
 router.get('/:id/detail', requireAuth, controller.getGuildDetailAggregate);
 router.get('/:id/members', requireAuth, controller.listGuildMembers);
 router.get('/:id/join-requests', requireAuth, controller.listGuildJoinRequests);

@@ -354,4 +354,9 @@ router.post('/refresh-token', refreshValidator, validate, authController.refresh
  */
 router.post('/logout', requireAuth, authController.logout);
 
+router.post('/change-password', requireAuth, authController.changePassword);
+router.get('/security', requireAuth, authController.securityOverview);
+router.post('/security/revoke-session', requireAuth, authController.revokeSession);
+router.post('/security/revoke-other-sessions', requireAuth, authController.revokeOtherSessions);
+
 module.exports = router;

@@ -49,4 +49,33 @@ const requireRole = (...roles) => {
   };
 };
 
-module.exports = { requireAuth, requireRole };
+
+const optionalAuth = asyncHandler(async (req, _res, next) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  try {
+    const decoded = verifyAccessToken(token);
+    const users = await query(
+      `SELECT u.id, u.role_id, u.username, u.email, u.display_name,
+              COALESCE(r.code, 'user') AS role_code,
+              u.account_status, u.is_verified, u.is_email_verified
+       FROM users u
+       LEFT JOIN roles r ON r.id = u.role_id
+       WHERE u.id = :id AND u.deleted_at IS NULL
+       LIMIT 1`,
+      { id: decoded.sub }
+    );
+    req.user = users.length ? users[0] : null;
+  } catch (_error) {
+    req.user = null;
+  }
+
+  next();
+});
+
+module.exports = { requireAuth, requireRole, optionalAuth };

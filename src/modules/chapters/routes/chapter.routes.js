@@ -1,6 +1,6 @@
 const express = require('express');
 const controller = require('../controllers/chapter.controller');
-const { requireAuth, requireRole } = require('../../../middlewares/auth.middleware');
+const { requireAuth, requireRole, optionalAuth } = require('../../../middlewares/auth.middleware');
 
 const router = express.Router();
 
@@ -51,7 +51,7 @@ router.get('/comic/:comicId', controller.listChaptersByComic);
  *       404:
  *         description: Không tìm thấy chapter
  */
-router.get('/:id', controller.getChapterDetail);
+router.get('/:id', optionalAuth, controller.getChapterDetail);
 
 /**
  * @openapi
@@ -172,5 +172,6 @@ router.post('/', requireAuth, requireRole('admin'), controller.createChapter);
  *         description: Không có quyền admin
  */
 router.put('/:id', requireAuth, requireRole('admin'), controller.updateChapter);
+router.post('/:id/read-progress', requireAuth, controller.saveReadingProgress);
 
 module.exports = router;

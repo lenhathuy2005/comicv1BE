@@ -30,6 +30,11 @@ exports.getGuildDetailAggregate = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, data, 'Lấy tổng quan bang thành công');
 });
 
+exports.getGuildCreationRequirements = asyncHandler(async (_req, res) => {
+  const data = await guildService.getGuildCreationRequirements();
+  return ApiResponse.success(res, data, 'Lấy điều kiện tạo bang thành công');
+});
+
 exports.createGuild = asyncHandler(async (req, res) => {
   const userId = resolveCurrentUserId(req);
 

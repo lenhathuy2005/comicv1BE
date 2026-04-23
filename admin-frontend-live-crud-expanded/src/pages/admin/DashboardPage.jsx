@@ -304,8 +304,7 @@ export default function DashboardPage() {
                   <div className="comic-list-item" key={comic.id}>
                     <div>
                       <div className="comic-title">{comic.title}</div>
-                      <div className="comic-meta">{comic.slug}</div>
-                    </div>
+                                          </div>
                     <span className={`status-badge status-${getComicStatus(comic)}`}>
                       {getComicStatus(comic)}
                     </span>

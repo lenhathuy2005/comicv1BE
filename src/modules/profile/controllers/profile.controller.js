@@ -9,13 +9,13 @@ exports.getMyProfile = asyncHandler(async (req, res) => {
 
 exports.updateMyProfile = asyncHandler(async (req, res) => {
   const data = await profileService.updateMyProfile(req.user.id, {
-    display_name: req.body.display_name,
-    avatar_url: req.body.avatar_url,
-    full_name: req.body.full_name,
-    phone_number: req.body.phone_number,
+    display_name: req.body.display_name ?? req.body.displayName,
+    avatar_url: req.body.avatar_url ?? req.body.avatarUrl,
+    full_name: req.body.full_name ?? req.body.fullName,
+    phone_number: req.body.phone_number ?? req.body.phoneNumber,
     bio: req.body.bio,
     gender: req.body.gender,
-    birth_date: req.body.birth_date,
+    birth_date: req.body.birth_date ?? req.body.birthDate,
     country: req.body.country,
   });
 
@@ -30,6 +30,11 @@ exports.getMyActivities = asyncHandler(async (req, res) => {
 exports.getMyFollows = asyncHandler(async (req, res) => {
   const data = await profileService.getMyFollows(req.user.id);
   return ApiResponse.success(res, data, 'Lấy danh sách theo dõi thành công');
+});
+
+exports.getMyReadingHistory = asyncHandler(async (req, res) => {
+  const data = await profileService.getMyReadingHistory(req.user.id, req.query.limit);
+  return ApiResponse.success(res, data, 'Lấy lịch sử đọc thành công');
 });
 
 exports.getMyGuild = asyncHandler(async (req, res) => {

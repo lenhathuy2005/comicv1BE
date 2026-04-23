@@ -109,7 +109,7 @@ export default function GuildsPage() {
   const saveGuild = async () => {
     setSaving(true);
     try {
-      const payload = { ...guildForm, leader_user_id: Number(guildForm.leader_user_id) };
+      const payload = { ...guildForm, slug: slugify(guildForm.name) || guildForm.slug || '', leader_user_id: Number(guildForm.leader_user_id) };
       if (editingGuild) {
         await apiRequest(`/api/admin/guilds/${editingGuild.id}`, { method: 'PUT', body: JSON.stringify(payload) });
       } else {
@@ -248,8 +248,7 @@ export default function GuildsPage() {
       </div>
       <CrudModal open={guildModalOpen} onClose={() => setGuildModalOpen(false)} title={editingGuild ? 'Chỉnh sửa bang phái' : 'Thêm bang phái'} footer={<><button className="secondary-btn" onClick={() => setGuildModalOpen(false)}>Hủy</button><button className="teal-btn" disabled={saving} onClick={saveGuild}>{saving ? 'Đang lưu...' : 'Lưu bang phái'}</button></>}>
         <div className="form-grid-two">
-          <label>Tên bang<input value={guildForm.name} onChange={(event) => setGuildForm((prev) => ({ ...prev, name: event.target.value, slug: prev.slug || slugify(event.target.value) }))} /></label>
-          <label>Slug<input value={guildForm.slug} onChange={(event) => setGuildForm((prev) => ({ ...prev, slug: slugify(event.target.value) }))} /></label>
+          <label className="form-span-2">Tên bang<input value={guildForm.name} onChange={(event) => setGuildForm((prev) => ({ ...prev, name: event.target.value }))} /></label>
           <label>Bang chủ<select value={guildForm.leader_user_id} onChange={(event) => setGuildForm((prev) => ({ ...prev, leader_user_id: event.target.value }))}><option value="">Chọn người dùng</option>{data.users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select></label>
           <label>Trạng thái<select value={guildForm.guild_status} onChange={(event) => setGuildForm((prev) => ({ ...prev, guild_status: event.target.value }))}><option value="active">active</option><option value="locked">locked</option><option value="disbanded">disbanded</option></select></label>
           <label>Giới hạn thành viên<input type="number" value={guildForm.member_limit} onChange={(event) => setGuildForm((prev) => ({ ...prev, member_limit: event.target.value }))} /></label>

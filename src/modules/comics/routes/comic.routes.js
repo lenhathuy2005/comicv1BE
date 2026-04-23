@@ -1,6 +1,6 @@
 const express = require('express');
 const controller = require('../controllers/comic.controller');
-const { requireAuth, requireRole } = require('../../../middlewares/auth.middleware');
+const { requireAuth, requireRole, optionalAuth } = require('../../../middlewares/auth.middleware');
 
 const router = express.Router();
 
@@ -41,7 +41,7 @@ const router = express.Router();
  *       200:
  *         description: Lấy danh sách truyện thành công
  */
-router.get('/', controller.listComics);
+router.get('/', optionalAuth, controller.listComics);
 
 /**
  * @openapi
@@ -63,7 +63,7 @@ router.get('/', controller.listComics);
  *       404:
  *         description: Không tìm thấy truyện
  */
-router.get('/:id', controller.getComicDetail);
+router.get('/:id', optionalAuth, controller.getComicDetail);
 
 /**
  * @openapi
@@ -172,5 +172,7 @@ router.post('/', requireAuth, requireRole('admin'), controller.createComic);
  *         description: Không có quyền admin
  */
 router.put('/:id', requireAuth, requireRole('admin'), controller.updateComic);
+router.post('/:id/follow', requireAuth, controller.followComic);
+router.delete('/:id/follow', requireAuth, controller.unfollowComic);
 
 module.exports = router;

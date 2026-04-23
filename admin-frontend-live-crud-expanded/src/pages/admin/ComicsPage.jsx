@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import CrudModal from '../../components/CrudModal';
 import PageTitleBar from '../../components/PageTitleBar';
 import { StatCardsRow } from '../../components/StatCardsRow';
@@ -122,7 +121,7 @@ export default function ComicsPage() {
 
       formData.append('author_id', form.author_id ? Number(form.author_id) : '');
       formData.append('title', form.title || '');
-      formData.append('slug', form.slug || '');
+      formData.append('slug', slugify(form.title) || form.slug || '');
       formData.append('summary', form.summary || '');
       formData.append('publication_status', form.publication_status || 'draft');
       formData.append('visibility_status', form.visibility_status || 'public');
@@ -331,21 +330,11 @@ export default function ComicsPage() {
                 setForm((prev) => ({
                   ...prev,
                   title: event.target.value,
-                  slug: prev.slug || slugify(event.target.value),
                 }))
               }
             />
           </label>
 
-          <label>
-            Slug
-            <input
-              value={form.slug}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, slug: slugify(event.target.value) }))
-              }
-            />
-          </label>
 
           <label>
             Trạng thái phát hành

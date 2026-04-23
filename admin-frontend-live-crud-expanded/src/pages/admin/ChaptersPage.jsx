@@ -148,7 +148,7 @@ export default function ChaptersPage() {
       formData.append('comic_id', Number(form.comic_id));
       formData.append('chapter_number', Number(form.chapter_number));
       formData.append('title', form.title || '');
-      formData.append('slug', form.slug || '');
+      formData.append('slug', slugify(form.title || `chapter-${form.chapter_number}`) || form.slug || '');
       formData.append('summary', form.summary || '');
       formData.append('access_type', form.access_type || 'free');
       formData.append('publish_status', form.publish_status || 'draft');
@@ -165,7 +165,7 @@ export default function ChaptersPage() {
             comic_id: Number(form.comic_id),
             chapter_number: Number(form.chapter_number),
             title: form.title || '',
-            slug: form.slug || '',
+            slug: slugify(form.title || `chapter-${form.chapter_number}`) || form.slug || '',
             summary: form.summary || '',
             access_type: form.access_type || 'free',
             publish_status: form.publish_status || 'draft',
@@ -455,7 +455,6 @@ export default function ChaptersPage() {
                 setForm((prev) => ({
                   ...prev,
                   chapter_number: event.target.value,
-                  slug: prev.slug || slugify(`chapter-${event.target.value}`),
                 }))
               }
             />
@@ -469,21 +468,11 @@ export default function ChaptersPage() {
                 setForm((prev) => ({
                   ...prev,
                   title: event.target.value,
-                  slug: prev.slug || slugify(event.target.value),
                 }))
               }
             />
           </label>
 
-          <label>
-            Slug
-            <input
-              value={form.slug}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, slug: slugify(event.target.value) }))
-              }
-            />
-          </label>
 
           <label>
             Access type

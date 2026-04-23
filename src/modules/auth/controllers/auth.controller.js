@@ -50,3 +50,22 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
   const data = await authService.verifyEmail(req.body.token);
   return ApiResponse.success(res, data, 'Xác thực email thành công');
 });
+exports.changePassword = asyncHandler(async (req, res) => {
+  const data = await authService.changePassword(req.user.id, req.body.currentPassword, req.body.newPassword);
+  return ApiResponse.success(res, data, 'Đổi mật khẩu thành công');
+});
+
+exports.securityOverview = asyncHandler(async (req, res) => {
+  const data = await authService.getSecurityOverview(req.user.id);
+  return ApiResponse.success(res, data, 'Lấy bảo mật tài khoản thành công');
+});
+
+exports.revokeSession = asyncHandler(async (req, res) => {
+  const data = await authService.revokeSession(req.user.id, req.body.sessionToken || req.body.session_token);
+  return ApiResponse.success(res, data, 'Thu hồi phiên đăng nhập thành công');
+});
+
+exports.revokeOtherSessions = asyncHandler(async (req, res) => {
+  const data = await authService.revokeOtherSessions(req.user.id, req.body.currentSessionToken || req.body.current_session_token || null);
+  return ApiResponse.success(res, data, 'Thu hồi các phiên khác thành công');
+});

@@ -8,7 +8,7 @@ exports.listChaptersByComic = asyncHandler(async (req, res) => {
 });
 
 exports.getChapterDetail = asyncHandler(async (req, res) => {
-  const data = await chapterService.getChapterDetail(req.params.id);
+  const data = await chapterService.getChapterDetail(req.params.id, req.user?.id || null);
   return ApiResponse.success(res, data, 'Lấy chi tiết chapter thành công');
 });
 
@@ -20,4 +20,13 @@ exports.createChapter = asyncHandler(async (req, res) => {
 exports.updateChapter = asyncHandler(async (req, res) => {
   const data = await chapterService.updateChapter(req.params.id, req.body);
   return ApiResponse.success(res, data, 'Cập nhật chapter thành công');
+});
+exports.saveReadingProgress = asyncHandler(async (req, res) => {
+  const data = await chapterService.saveReadingProgress({
+    userId: req.user.id,
+    chapterId: req.params.id,
+    lastPageNumber: req.body.last_page_number ?? req.body.lastPageNumber ?? 1,
+    progressPercent: req.body.progress_percent ?? req.body.progressPercent,
+  });
+  return ApiResponse.success(res, data, 'Lưu tiến độ đọc thành công');
 });

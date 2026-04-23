@@ -10,7 +10,7 @@ exports.getMyInventory = asyncHandler(async (req, res) => {
 exports.useItem = asyncHandler(async (req, res) => {
   const data = await inventoryService.useItem({
     userId: req.user.id,
-    itemId: req.body.item_id,
+    itemId: req.body.item_id ?? req.body.itemId,
     quantity: req.body.quantity || 1,
   });
 

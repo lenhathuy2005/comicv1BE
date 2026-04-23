@@ -288,6 +288,35 @@ async function getGuildDetailAggregate(guildId, currentUserId = null) {
   };
 }
 
+
+async function getSystemConfigValue(configKey) {
+  const rows = await query(
+    `SELECT config_value, value_type FROM system_configs WHERE config_key = :configKey LIMIT 1`,
+    { configKey }
+  );
+  if (!rows.length) return null;
+  const row = rows[0];
+  if (row.value_type === 'int') return Number(row.config_value || 0);
+  if (row.value_type === 'decimal') return Number(row.config_value || 0);
+  if (row.value_type === 'bool') return String(row.config_value) === '1' || String(row.config_value).toLowerCase() === 'true';
+  if (row.value_type === 'json') {
+    try { return JSON.parse(row.config_value); } catch (_error) { return row.config_value; }
+  }
+  return row.config_value;
+}
+
+async function getGuildCreationRequirements() {
+  const [minLevel, goldCost] = await Promise.all([
+    getSystemConfigValue('guild_create_min_level'),
+    getSystemConfigValue('guild_create_gold_cost'),
+  ]);
+
+  return {
+    min_level: Number(minLevel ?? 2),
+    gold_cost: Number(goldCost ?? 5000),
+  };
+}
+
 async function createGuild({ userId, name, slug, description = null }) {
   if (!userId) {
     throw new ApiError(401, 'Không xác định được người dùng hiện tại');
@@ -296,6 +325,8 @@ async function createGuild({ userId, name, slug, description = null }) {
   if (!name || !slug) {
     throw new ApiError(400, 'name và slug là bắt buộc');
   }
+
+  const requirements = await getGuildCreationRequirements();
 
   return transaction(async (conn) => {
     const existingGuild = await queryWithConn(
@@ -327,6 +358,34 @@ async function createGuild({ userId, name, slug, description = null }) {
 
     if (existingMember.length) {
       throw new ApiError(400, 'Bạn đã thuộc một bang hội');
+    }
+
+    const userRows = await queryWithConn(
+      conn,
+      `SELECT up.gold_balance, uc.current_level_id, lv.level_number
+       FROM users u
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       LEFT JOIN user_cultivation uc ON uc.user_id = u.id
+       LEFT JOIN levels lv ON lv.id = uc.current_level_id
+       WHERE u.id = :userId
+       LIMIT 1`,
+      { userId }
+    );
+
+    if (!userRows.length) {
+      throw new ApiError(404, 'Không tìm thấy người dùng');
+    }
+
+    const user = userRows[0];
+    const userLevel = Number(user.level_number || 0);
+    const goldBalance = Number(user.gold_balance || 0);
+
+    if (userLevel < requirements.min_level) {
+      throw new ApiError(400, `Cần đạt cấp ${requirements.min_level} trở lên để tạo bang`);
+    }
+
+    if (goldBalance < requirements.gold_cost) {
+      throw new ApiError(400, `Cần ${requirements.gold_cost} vàng để tạo bang`);
     }
 
     const roleRows = await queryWithConn(
@@ -411,6 +470,14 @@ async function createGuild({ userId, name, slug, description = null }) {
     );
 
     await conn.query(
+      `UPDATE user_profiles SET gold_balance = GREATEST(COALESCE(gold_balance, 0) - :goldCost, 0), updated_at = NOW() WHERE user_id = :userId`,
+      {
+        goldCost: requirements.gold_cost,
+        userId,
+      }
+    );
+
+    await conn.query(
       `
       UPDATE users
       SET current_guild_id = :guildId,
@@ -436,17 +503,21 @@ async function createGuild({ userId, name, slug, description = null }) {
         :guildId,
         :userId,
         'create',
-        'Tạo bang hội',
+        :details,
         NOW()
       )
       `,
       {
         guildId,
         userId,
+        details: `Tạo bang hội - trừ ${requirements.gold_cost} vàng`,
       }
     );
 
-    return getGuildDetail(guildId);
+    return {
+      requirements,
+      guild: await getGuildDetail(guildId),
+    };
   });
 }
 
@@ -1432,6 +1503,7 @@ module.exports = {
   listGuilds,
   getGuildDetail,
   getGuildDetailAggregate,
+  getGuildCreationRequirements,
   createGuild,
   requestJoinGuild,
   approveJoinRequest,
