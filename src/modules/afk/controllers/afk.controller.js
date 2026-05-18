@@ -19,6 +19,12 @@ exports.listConfigs = asyncHandler(async (_req, res) => {
   return ApiResponse.success(res, data, 'Lấy cấu hình AFK thành công');
 });
 
+exports.getRunningSession = asyncHandler(async (req, res) => {
+  const userId = resolveCurrentUserId(req);
+  const data = await afkService.getRunningSession(userId);
+  return ApiResponse.success(res, data, 'Lấy phiên AFK đang chạy thành công');
+});
+
 exports.startSession = asyncHandler(async (req, res) => {
   const userId = resolveCurrentUserId(req);
   const data = await afkService.startSession(userId);

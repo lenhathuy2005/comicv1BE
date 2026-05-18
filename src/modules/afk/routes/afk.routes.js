@@ -24,6 +24,7 @@ const router = express.Router();
  */
 router.get('/configs', controller.listConfigs);
 
+
 /**
  * @openapi
  * /api/afk/sessions:
@@ -39,6 +40,7 @@ router.get('/configs', controller.listConfigs);
  *       401:
  *         description: Chưa đăng nhập hoặc token không hợp lệ
  */
+router.get('/sessions/running', requireAuth, controller.getRunningSession);
 router.post('/sessions', requireAuth, controller.startSession);
 
 /**

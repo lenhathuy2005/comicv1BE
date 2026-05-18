@@ -4,6 +4,7 @@ const ApiError = require('../../../utils/ApiError');
 function calculateDurationSeconds(startedAt, endedAt = new Date()) {
   const start = new Date(startedAt).getTime();
   const end = new Date(endedAt).getTime();
+
   return Math.max(0, Math.floor((end - start) / 1000));
 }
 
@@ -13,16 +14,27 @@ function parseConfigValue(rawValue, valueType) {
   switch (valueType) {
     case 'int':
       return Number.parseInt(rawValue, 10) || 0;
+
     case 'decimal':
       return Number(rawValue) || 0;
+
     case 'bool':
-      return rawValue === true || rawValue === 'true' || rawValue === '1' || rawValue === 1;
+      return (
+        rawValue === true ||
+        rawValue === 'true' ||
+        rawValue === '1' ||
+        rawValue === 1
+      );
+
     case 'json':
       try {
-        return typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
+        return typeof rawValue === 'string'
+          ? JSON.parse(rawValue)
+          : rawValue;
       } catch (_error) {
         return rawValue;
       }
+
     case 'string':
     default:
       return rawValue;
@@ -31,7 +43,9 @@ function parseConfigValue(rawValue, valueType) {
 
 function tryNumber(value) {
   if (value === null || value === undefined || value === '') return null;
+
   const parsed = Number(value);
+
   return Number.isNaN(parsed) ? null : parsed;
 }
 
@@ -47,25 +61,60 @@ function extractNumericFromConfigValue(configValue, options = {}) {
 
   if (levelId !== null && configValue[levelId] !== undefined) {
     const levelDirect = tryNumber(configValue[levelId]);
+
     if (levelDirect !== null) return levelDirect;
   }
 
   for (const key of preferredKeys) {
     if (configValue[key] !== undefined) {
       const byKey = tryNumber(configValue[key]);
+
       if (byKey !== null) return byKey;
     }
   }
 
-  const commonKeys = ['value', 'default', 'base', 'amount', 'exp_per_minute', 'percent'];
+  const commonKeys = [
+    'value',
+    'default',
+    'base',
+    'amount',
+    'exp_per_minute',
+    'gold_per_minute',
+    'bonus_percent',
+    'percent',
+  ];
+
   for (const key of commonKeys) {
     if (configValue[key] !== undefined) {
       const byKey = tryNumber(configValue[key]);
+
       if (byKey !== null) return byKey;
     }
   }
 
   return null;
+}
+
+function extractBooleanFromConfigValue(configValue, fallback = true) {
+  if (typeof configValue === 'boolean') return configValue;
+
+  if (typeof configValue === 'number') {
+    return configValue === 1;
+  }
+
+  if (typeof configValue === 'string') {
+    const text = configValue.trim().toLowerCase();
+
+    if (['true', '1', 'yes', 'on', 'enabled'].includes(text)) {
+      return true;
+    }
+
+    if (['false', '0', 'no', 'off', 'disabled'].includes(text)) {
+      return false;
+    }
+  }
+
+  return fallback;
 }
 
 async function listConfigs() {
@@ -105,14 +154,22 @@ async function getRunningSession(userId) {
 
 async function getAfkConfigMap() {
   const rows = await query(`
-    SELECT config_key, config_value, value_type
+    SELECT
+      config_key,
+      config_value,
+      value_type
     FROM afk_configs
   `);
 
   const map = {};
+
   for (const row of rows) {
-    map[row.config_key] = parseConfigValue(row.config_value, row.value_type);
+    map[row.config_key] = parseConfigValue(
+      row.config_value,
+      row.value_type
+    );
   }
+
   return map;
 }
 
@@ -131,13 +188,75 @@ async function getUserCultivation(userId, conn = null) {
   return rows[0] || null;
 }
 
+async function getUserVipBonusPercent(userId, conn, configMap) {
+  const rows = await queryWithConn(
+    conn,
+    `
+    SELECT current_vip_level_id
+    FROM user_vip
+    WHERE user_id = :userId
+    LIMIT 1
+    `,
+    { userId }
+  );
+
+  const vipLevelId = Number(rows[0]?.current_vip_level_id || 0);
+
+  if (vipLevelId <= 0) return 0;
+
+  const rawVipBonus =
+    configMap.afk_vip_bonus_percent ??
+    configMap.vip_afk_bonus_percent ??
+    0;
+
+  return (
+    extractNumericFromConfigValue(rawVipBonus, {
+      levelId: vipLevelId,
+      preferredKeys: [
+        'vip_bonus_percent',
+        'afk_vip_bonus_percent',
+        'bonus_percent',
+        'percent',
+      ],
+    }) ?? 0
+  );
+}
+
+async function getTodayUsedAfkSeconds(userId, conn) {
+  const rows = await queryWithConn(
+    conn,
+    `
+    SELECT COALESCE(SUM(duration_seconds), 0) AS total_seconds
+    FROM afk_sessions
+    WHERE user_id = :userId
+      AND DATE(created_at) = CURDATE()
+      AND session_status IN ('finished', 'cancelled')
+    `,
+    { userId }
+  );
+
+  return Number(rows[0]?.total_seconds || 0);
+}
+
 async function startSession(userId) {
   if (!userId) {
     throw new ApiError(401, 'Không xác định được người dùng hiện tại');
   }
 
+  const configMap = await getAfkConfigMap();
+
+  const afkEnabled = extractBooleanFromConfigValue(
+    configMap.afk_enabled,
+    true
+  );
+
+  if (!afkEnabled) {
+    throw new ApiError(403, 'Hệ thống AFK hiện đang tạm tắt');
+  }
+
   return transaction(async (conn) => {
     const cultivation = await getUserCultivation(userId, conn);
+
     if (!cultivation) {
       throw new ApiError(404, 'Không tìm thấy dữ liệu tu luyện của người dùng');
     }
@@ -167,6 +286,9 @@ async function startSession(userId) {
         base_exp_earned,
         bonus_exp_earned,
         total_exp_earned,
+        base_gold_earned,
+        bonus_gold_earned,
+        total_gold_earned,
         claim_status,
         session_status,
         created_at,
@@ -175,6 +297,9 @@ async function startSession(userId) {
       VALUES (
         :userId,
         NOW(),
+        0,
+        0,
+        0,
         0,
         0,
         0,
@@ -190,7 +315,12 @@ async function startSession(userId) {
 
     const rows = await queryWithConn(
       conn,
-      `SELECT * FROM afk_sessions WHERE id = :id LIMIT 1`,
+      `
+      SELECT *
+      FROM afk_sessions
+      WHERE id = :id
+      LIMIT 1
+      `,
       { id: result.insertId }
     );
 
@@ -223,68 +353,168 @@ async function finishSession(userId, sessionId) {
     const session = rows[0];
 
     if (session.session_status !== 'running') {
-      throw new ApiError(400, 'Phiên AFK này không còn ở trạng thái running');
+      throw new ApiError(
+        400,
+        'Phiên AFK này không còn ở trạng thái running'
+      );
     }
 
     const cultivation = await getUserCultivation(userId, conn);
+
     if (!cultivation) {
       throw new ApiError(404, 'Không tìm thấy dữ liệu tu luyện của người dùng');
     }
 
-    const endedAt = new Date();
-    const durationSeconds = calculateDurationSeconds(session.started_at, endedAt);
     const configMap = await getAfkConfigMap();
 
+    const actualDurationSeconds = calculateDurationSeconds(session.started_at);
+
+    const maxMinutesPerSession =
+      extractNumericFromConfigValue(
+        configMap.afk_max_minutes_per_session ?? 480,
+        {
+          preferredKeys: [
+            'max_minutes_per_session',
+            'afk_max_minutes_per_session',
+            'minutes',
+          ],
+        }
+      ) ?? 480;
+
+    const dailyMaxMinutes =
+      extractNumericFromConfigValue(
+        configMap.afk_daily_max_minutes ?? 720,
+        {
+          preferredKeys: [
+            'daily_max_minutes',
+            'afk_daily_max_minutes',
+            'minutes',
+          ],
+        }
+      ) ?? 720;
+
+    const usedTodaySeconds = await getTodayUsedAfkSeconds(userId, conn);
+
+    const sessionCapSeconds = Math.max(
+      0,
+      Math.floor(maxMinutesPerSession * 60)
+    );
+
+    const dailyRemainingSeconds = Math.max(
+      0,
+      Math.floor(dailyMaxMinutes * 60) - usedTodaySeconds
+    );
+
+    const rewardableSeconds = Math.max(
+      0,
+      Math.min(
+        actualDurationSeconds,
+        sessionCapSeconds,
+        dailyRemainingSeconds
+      )
+    );
+
     const rawExpConfig =
-      configMap.afk_base_exp_per_minute ??
       configMap.afk_exp_per_minute ??
+      configMap.afk_base_exp_per_minute ??
       configMap.base_exp_per_minute ??
       10;
 
-    const rawBonusConfig =
+    const rawGoldConfig =
+      configMap.afk_gold_per_minute ??
+      configMap.base_gold_per_minute ??
+      0;
+
+    const rawCommonBonusConfig =
       configMap.afk_bonus_percent ??
+      configMap.bonus_percent ??
       0;
 
     const expPerMinute =
       extractNumericFromConfigValue(rawExpConfig, {
         levelId: cultivation.current_level_id,
-        preferredKeys: ['exp_per_minute', 'base_exp_per_minute'],
+        preferredKeys: [
+          'exp_per_minute',
+          'base_exp_per_minute',
+          'exp',
+        ],
       }) ?? 10;
 
-    const bonusPercent =
-      extractNumericFromConfigValue(rawBonusConfig, {
+    const goldPerMinute =
+      extractNumericFromConfigValue(rawGoldConfig, {
         levelId: cultivation.current_level_id,
-        preferredKeys: ['bonus_percent', 'afk_bonus_percent', 'percent'],
+        preferredKeys: [
+          'gold_per_minute',
+          'base_gold_per_minute',
+          'gold',
+        ],
       }) ?? 0;
 
-    const baseExp = Math.floor((durationSeconds / 60) * expPerMinute);
-    const bonusExp = Math.floor((baseExp * bonusPercent) / 100);
+    const commonBonusPercent =
+      extractNumericFromConfigValue(rawCommonBonusConfig, {
+        levelId: cultivation.current_level_id,
+        preferredKeys: [
+          'bonus_percent',
+          'afk_bonus_percent',
+          'percent',
+        ],
+      }) ?? 0;
+
+    const vipBonusPercent = await getUserVipBonusPercent(
+      userId,
+      conn,
+      configMap
+    );
+
+    const totalBonusPercent = commonBonusPercent + vipBonusPercent;
+
+    const rewardableMinutes = rewardableSeconds / 60;
+
+    const baseExp = Math.floor(rewardableMinutes * expPerMinute);
+    const bonusExp = Math.floor((baseExp * totalBonusPercent) / 100);
     const totalExp = baseExp + bonusExp;
+
+    const baseGold = Number((rewardableMinutes * goldPerMinute).toFixed(2));
+    const bonusGold = Number(
+      ((baseGold * totalBonusPercent) / 100).toFixed(2)
+    );
+    const totalGold = Number((baseGold + bonusGold).toFixed(2));
 
     await conn.query(
       `
       UPDATE afk_sessions
       SET ended_at = NOW(),
-          duration_seconds = :durationSeconds,
+          duration_seconds = :actualDurationSeconds,
           base_exp_earned = :baseExp,
           bonus_exp_earned = :bonusExp,
           total_exp_earned = :totalExp,
+          base_gold_earned = :baseGold,
+          bonus_gold_earned = :bonusGold,
+          total_gold_earned = :totalGold,
           session_status = 'finished',
           updated_at = NOW()
       WHERE id = :sessionId
       `,
       {
-        durationSeconds,
+        actualDurationSeconds,
         baseExp,
         bonusExp,
         totalExp,
+        baseGold,
+        bonusGold,
+        totalGold,
         sessionId,
       }
     );
 
     const updatedRows = await queryWithConn(
       conn,
-      `SELECT * FROM afk_sessions WHERE id = :sessionId LIMIT 1`,
+      `
+      SELECT *
+      FROM afk_sessions
+      WHERE id = :sessionId
+      LIMIT 1
+      `,
       { sessionId }
     );
 
@@ -324,13 +554,37 @@ async function claimSession(userId, sessionId) {
       throw new ApiError(400, 'Phiên AFK đã được nhận thưởng trước đó');
     }
 
+    const configMap = await getAfkConfigMap();
+
+    const minMinutesToClaim =
+      extractNumericFromConfigValue(
+        configMap.afk_min_minutes_to_claim ?? 1,
+        {
+          preferredKeys: [
+            'min_minutes_to_claim',
+            'afk_min_minutes_to_claim',
+            'minutes',
+          ],
+        }
+      ) ?? 1;
+
+    const requiredSeconds = Math.floor(minMinutesToClaim * 60);
+
+    if (Number(session.duration_seconds || 0) < requiredSeconds) {
+      throw new ApiError(
+        400,
+        `Cần AFK tối thiểu ${minMinutesToClaim} phút để nhận thưởng`
+      );
+    }
+
     const cultivation = await getUserCultivation(userId, conn);
+
     if (!cultivation) {
       throw new ApiError(404, 'Không tìm thấy dữ liệu tu luyện của người dùng');
     }
 
     const claimedExp = Number(session.total_exp_earned || 0);
-    const claimedGold = 0;
+    const claimedGold = Number(session.total_gold_earned || 0);
 
     await conn.query(
       `
@@ -342,6 +596,19 @@ async function claimSession(userId, sessionId) {
       `,
       {
         claimedExp,
+        userId,
+      }
+    );
+
+    await conn.query(
+      `
+      UPDATE user_profiles
+      SET gold_balance = gold_balance + :claimedGold,
+          updated_at = NOW()
+      WHERE user_id = :userId
+      `,
+      {
+        claimedGold,
         userId,
       }
     );

@@ -938,23 +938,92 @@ async function deleteMission(id) {
 }
 
 async function listAfkAdmin() {
-  const [configs, sessions] = await Promise.all([
-    query(`SELECT * FROM afk_configs ORDER BY id ASC`),
-    query(`SELECT s.*, u.display_name AS user_name
-           FROM afk_sessions s
-           INNER JOIN users u ON u.id = s.user_id
-           ORDER BY s.created_at DESC
-           LIMIT 200`),
+  const [
+    configs,
+    sessions,
+    runningStats,
+    pendingClaimStats,
+    todaySessionStats,
+    todayClaimStats,
+  ] = await Promise.all([
+    query(`
+      SELECT *
+      FROM afk_configs
+      ORDER BY id ASC
+    `),
+
+    query(`
+      SELECT
+        s.*,
+        u.display_name AS user_name,
+        u.username
+      FROM afk_sessions s
+      INNER JOIN users u ON u.id = s.user_id
+      ORDER BY s.created_at DESC
+      LIMIT 200
+    `),
+
+    query(`
+      SELECT
+        COUNT(*) AS running_sessions,
+        COUNT(DISTINCT user_id) AS users_afk
+      FROM afk_sessions
+      WHERE session_status = 'running'
+    `),
+
+    query(`
+      SELECT COUNT(*) AS pending_claims
+      FROM afk_sessions
+      WHERE session_status = 'finished'
+        AND claim_status = 'pending'
+    `),
+
+    query(`
+      SELECT
+        COALESCE(SUM(duration_seconds), 0) AS total_seconds_today,
+        COUNT(*) AS total_sessions_today
+      FROM afk_sessions
+      WHERE DATE(created_at) = CURDATE()
+    `),
+
+    query(`
+      SELECT
+        COALESCE(SUM(claimed_exp), 0) AS claimed_exp_today,
+        COALESCE(SUM(claimed_gold), 0) AS claimed_gold_today,
+        COUNT(*) AS total_claims_today
+      FROM afk_claim_logs
+      WHERE DATE(claimed_at) = CURDATE()
+    `),
   ]);
+
+  const runningRow = runningStats[0] || {};
+  const pendingRow = pendingClaimStats[0] || {};
+  const sessionTodayRow = todaySessionStats[0] || {};
+  const claimTodayRow = todayClaimStats[0] || {};
+
   const overview = {
     totalConfigs: configs.length,
-    runningSessions: sessions.filter((item) => item.session_status === 'running').length,
-    totalHoursToday: sessions
-      .filter((item) => String(item.created_at).slice(0, 10) === new Date().toISOString().slice(0, 10))
-      .reduce((sum, item) => sum + Number(item.duration_seconds || 0), 0) / 3600,
-    usersAfk: new Set(sessions.filter((item) => item.session_status === 'running').map((item) => item.user_id)).size,
+    runningSessions: Number(runningRow.running_sessions || 0),
+    usersAfk: Number(runningRow.users_afk || 0),
+    pendingClaims: Number(pendingRow.pending_claims || 0),
+
+    totalHoursToday:
+      Number(sessionTodayRow.total_seconds_today || 0) / 3600,
+
+    totalSessionsToday: Number(
+      sessionTodayRow.total_sessions_today || 0
+    ),
+
+    claimedExpToday: Number(claimTodayRow.claimed_exp_today || 0),
+    claimedGoldToday: Number(claimTodayRow.claimed_gold_today || 0),
+    totalClaimsToday: Number(claimTodayRow.total_claims_today || 0),
   };
-  return { overview, configs, sessions };
+
+  return {
+    overview,
+    configs,
+    sessions,
+  };
 }
 
 async function createAfkConfig(payload = {}) {
