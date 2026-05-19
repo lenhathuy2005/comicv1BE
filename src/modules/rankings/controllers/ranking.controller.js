@@ -59,7 +59,9 @@ async function getMyRanking(req, res, next) {
       throw new ApiError(401, 'Không xác định được user hiện tại');
     }
 
-    const data = await rankingService.getMyRanking(type, userId);
+    const preferSnapshot = req.query.preferSnapshot !== 'false';
+
+    const data = await rankingService.getMyRanking(type, userId, preferSnapshot);
 
     return res.json({
       success: true,

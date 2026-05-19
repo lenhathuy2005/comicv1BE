@@ -1,13 +1,34 @@
 const { query, transaction } = require('../../../config/database');
 const ApiError = require('../../../utils/ApiError');
 
-async function listComics(filters, currentUserId = null) {
-  const page = Number(filters.page || 1);
-  const limit = Math.min(Math.max(Number(filters.limit || 20), 1), 100);
-  const offset = (page - 1) * limit;
+function buildComicSort(sort) {
+  const value = String(sort || '').trim().toLowerCase();
 
-  const rows = await query(
-    `SELECT c.id, c.title, c.slug, c.cover_image_url, c.banner_image_url, c.summary,
+  if (value === 'views' || value === 'view' || value === 'top_views') {
+    return 'COALESCE(c.total_views, 0) DESC, COALESCE(c.total_follows, 0) DESC, c.id DESC';
+  }
+
+  if (value === 'follows' || value === 'follow' || value === 'top_follows') {
+    return 'COALESCE(c.total_follows, 0) DESC, COALESCE(c.total_views, 0) DESC, c.id DESC';
+  }
+
+  if (value === 'chapters' || value === 'chapter') {
+    return 'total_chapters DESC, COALESCE(c.total_views, 0) DESC, c.id DESC';
+  }
+
+  if (value === 'hot' || value === 'rank' || value === 'ranking') {
+    return '(COALESCE(c.total_views, 0) + COALESCE(c.total_follows, 0) * 10) DESC, c.id DESC';
+  }
+
+  if (value === 'latest' || value === 'updated') {
+    return 'c.updated_at DESC, c.id DESC';
+  }
+
+  return 'c.id DESC';
+}
+
+function buildComicSelect(orderBySql, limitSql = 'LIMIT :limit OFFSET :offset') {
+  return `SELECT c.id, c.title, c.slug, c.cover_image_url, c.banner_image_url, c.summary,
             c.publication_status, c.visibility_status, c.age_rating, c.total_views, c.total_follows,
             c.created_at, c.updated_at,
             a.name AS author_name,
@@ -20,21 +41,115 @@ async function listComics(filters, currentUserId = null) {
      LEFT JOIN comic_genres cg ON cg.comic_id = c.id
      LEFT JOIN genres g ON g.id = cg.genre_id
      LEFT JOIN follows f ON f.comic_id = c.id
-     WHERE (:keyword IS NULL OR c.title LIKE CONCAT('%', :keyword, '%') OR c.slug LIKE CONCAT('%', :keyword, '%'))
+     WHERE (:keyword IS NULL OR c.title LIKE CONCAT('%', :keyword, '%') OR c.slug LIKE CONCAT('%', :keyword, '%') OR a.name LIKE CONCAT('%', :keyword, '%'))
        AND (:publicationStatus IS NULL OR c.publication_status = :publicationStatus)
+       AND (:genreId IS NULL OR EXISTS (
+         SELECT 1
+         FROM comic_genres cg_filter
+         WHERE cg_filter.comic_id = c.id AND cg_filter.genre_id = :genreId
+       ))
+       AND (:genreSlug IS NULL OR EXISTS (
+         SELECT 1
+         FROM comic_genres cg_filter
+         JOIN genres g_filter ON g_filter.id = cg_filter.genre_id
+         WHERE cg_filter.comic_id = c.id AND g_filter.slug = :genreSlug
+       ))
        AND c.deleted_at IS NULL
      GROUP BY c.id
-     ORDER BY c.id DESC
-     LIMIT :limit OFFSET :offset`,
+     ORDER BY ${orderBySql}
+     ${limitSql}`;
+}
+
+function mapComicRows(rows) {
+  return rows.map((row) => ({
+    ...row,
+    total_chapters: Number(row.total_chapters || 0),
+    total_views: Number(row.total_views || 0),
+    total_follows: Number(row.total_follows || 0),
+    is_following: Boolean(Number(row.is_following || 0)),
+  }));
+}
+
+async function listGenres() {
+  return query(
+    `SELECT
+       g.id,
+       g.name,
+       g.slug,
+       g.description,
+       COUNT(DISTINCT c.id) AS comic_count
+     FROM genres g
+     LEFT JOIN comic_genres cg ON cg.genre_id = g.id
+     LEFT JOIN comics c ON c.id = cg.comic_id AND c.deleted_at IS NULL
+     GROUP BY g.id
+     ORDER BY comic_count DESC, g.name ASC`
+  );
+}
+
+async function listComics(filters, currentUserId = null) {
+  const page = Number(filters.page || 1);
+  const limit = Math.min(Math.max(Number(filters.limit || 20), 1), 100);
+  const offset = (page - 1) * limit;
+  const orderBySql = buildComicSort(filters.sort || filters.orderBy);
+
+  const rows = await query(
+    buildComicSelect(orderBySql),
     {
-      keyword: filters.keyword || null,
-      publicationStatus: filters.publicationStatus || null,
+      keyword: filters.keyword || filters.q || null,
+      publicationStatus: filters.publicationStatus || filters.publication_status || null,
+      genreId: filters.genreId || filters.genre_id || null,
+      genreSlug: filters.genreSlug || filters.genre_slug || filters.genre || null,
       currentUserId: currentUserId || 0,
       limit,
       offset,
     }
   );
-  return { page, limit, items: rows.map((row) => ({ ...row, is_following: Boolean(Number(row.is_following || 0)) })) };
+
+  return { page, limit, items: mapComicRows(rows) };
+}
+
+async function listComicRankings(filters, currentUserId = null) {
+  const limit = Math.min(Math.max(Number(filters.limit || 20), 1), 100);
+  const orderBySql = buildComicSort(filters.sort || 'hot');
+
+  const rows = await query(
+    buildComicSelect(orderBySql, 'LIMIT :limit'),
+    {
+      keyword: filters.keyword || filters.q || null,
+      publicationStatus: filters.publicationStatus || filters.publication_status || null,
+      genreId: filters.genreId || filters.genre_id || null,
+      genreSlug: filters.genreSlug || filters.genre_slug || filters.genre || null,
+      currentUserId: currentUserId || 0,
+      limit,
+      offset: 0,
+    }
+  );
+
+  const normalizedSort = String(filters.sort || 'hot').trim().toLowerCase();
+
+  return {
+    sort: normalizedSort,
+    limit,
+    items: mapComicRows(rows).map((comic, index) => {
+      const totalViews = Number(comic.total_views || 0);
+      const totalFollows = Number(comic.total_follows || 0);
+      let scoreValue = totalViews + totalFollows * 10;
+
+      if (normalizedSort === 'views' || normalizedSort === 'view' || normalizedSort === 'top_views') {
+        scoreValue = totalViews;
+      }
+
+      if (normalizedSort === 'follows' || normalizedSort === 'follow' || normalizedSort === 'top_follows') {
+        scoreValue = totalFollows;
+      }
+
+      return {
+        ...comic,
+        rank: index + 1,
+        score_value: scoreValue,
+      };
+    }),
+  };
 }
 
 async function getComicDetail(comicId, currentUserId = null) {
@@ -172,7 +287,9 @@ async function listChapterImages(chapterId) {
 }
 
 module.exports = {
+  listGenres,
   listComics,
+  listComicRankings,
   getComicDetail,
   createComic,
   updateComic,

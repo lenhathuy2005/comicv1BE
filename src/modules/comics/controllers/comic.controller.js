@@ -2,6 +2,17 @@ const ApiResponse = require('../../../utils/apiResponse');
 const asyncHandler = require('../../../utils/asyncHandler');
 const comicService = require('../services/comic.service');
 
+
+exports.listGenres = asyncHandler(async (_req, res) => {
+  const data = await comicService.listGenres();
+  return ApiResponse.success(res, data, 'Lấy danh sách thể loại thành công');
+});
+
+exports.listComicRankings = asyncHandler(async (req, res) => {
+  const data = await comicService.listComicRankings(req.query, req.user?.id || null);
+  return ApiResponse.success(res, data, 'Lấy bảng xếp hạng truyện thành công');
+});
+
 exports.listComics = asyncHandler(async (req, res) => {
   const data = await comicService.listComics(req.query, req.user?.id || null);
   return ApiResponse.success(res, data, 'Lấy danh sách truyện thành công');

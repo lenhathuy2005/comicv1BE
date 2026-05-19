@@ -63,6 +63,9 @@ router.get('/', optionalAuth, controller.listComics);
  *       404:
  *         description: Không tìm thấy truyện
  */
+router.get('/genres', controller.listGenres);
+router.get('/rankings', optionalAuth, controller.listComicRankings);
+
 router.get('/:id', optionalAuth, controller.getComicDetail);
 
 /**

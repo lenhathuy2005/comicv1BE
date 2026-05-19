@@ -1,7 +1,7 @@
 const { query, transaction } = require('../../../config/database');
 const ApiError = require('../../../utils/ApiError');
 
-const ALLOWED_TYPES = ['power', 'level', 'vip', 'guild_power'];
+const ALLOWED_TYPES = ['power', 'level', 'vip', 'wealth', 'guild_power'];
 
 function normalizeLimit(limit) {
   const parsed = Number(limit) || 20;
@@ -32,17 +32,13 @@ function toDateString(date) {
 }
 
 async function getAvailableRankingTypes() {
-  return ALLOWED_TYPES.map((type) => ({
-    type,
-    label:
-      type === 'power'
-        ? 'BXH lực chiến'
-        : type === 'level'
-        ? 'BXH cấp độ'
-        : type === 'vip'
-        ? 'BXH VIP'
-        : 'BXH bang hội',
-  }));
+  return [
+    { type: 'level', label: 'BXH cấp độ / cảnh giới' },
+    { type: 'vip', label: 'BXH VIP' },
+    { type: 'wealth', label: 'BXH tài phú' },
+    { type: 'power', label: 'BXH lực chiến' },
+    { type: 'guild_power', label: 'BXH bang hội' },
+  ];
 }
 
 async function getLatestSnapshotTime(type) {
@@ -117,7 +113,8 @@ async function getLivePowerRanking(limit, fullList = false) {
       uc.combat_power,
       uc.combat_power AS score_value,
       l.level_number,
-      r.name AS realm_name
+      r.name AS realm_name,
+      r.realm_order
     FROM users u
     JOIN user_cultivation uc ON uc.user_id = u.id
     LEFT JOIN levels l ON l.id = uc.current_level_id
@@ -144,12 +141,13 @@ async function getLiveLevelRanking(limit, fullList = false) {
       uc.combat_power,
       l.level_number,
       r.name AS realm_name,
-      l.level_number AS score_value
+      r.realm_order,
+      (COALESCE(r.realm_order, 0) * 1000000 + COALESCE(l.level_number, 0) * 1000 + LEAST(COALESCE(uc.current_exp, 0), 999)) AS score_value
     FROM users u
     JOIN user_cultivation uc ON uc.user_id = u.id
     LEFT JOIN levels l ON l.id = uc.current_level_id
     LEFT JOIN realms r ON r.id = uc.current_realm_id
-    ORDER BY l.level_number DESC, uc.current_exp DESC, uc.combat_power DESC, u.id ASC
+    ORDER BY COALESCE(r.realm_order, 0) DESC, COALESCE(l.level_number, 0) DESC, uc.current_exp DESC, uc.combat_power DESC, u.id ASC
     ${fullList ? '' : 'LIMIT :limit'}
     `,
     fullList ? {} : { limit }
@@ -173,7 +171,28 @@ async function getLiveVipRanking(limit, fullList = false) {
     FROM users u
     JOIN user_vip uv ON uv.user_id = u.id
     LEFT JOIN vip_levels vl ON vl.id = uv.current_vip_level_id
-    ORDER BY vl.level_number DESC, uv.total_topup_amount DESC, uv.vip_exp DESC, u.id ASC
+    ORDER BY COALESCE(vl.level_number, 0) DESC, uv.total_topup_amount DESC, uv.vip_exp DESC, u.id ASC
+    ${fullList ? '' : 'LIMIT :limit'}
+    `,
+    fullList ? {} : { limit }
+  );
+}
+
+async function getLiveWealthRanking(limit, fullList = false) {
+  return query(
+    `
+    SELECT
+      u.id AS user_id,
+      u.username,
+      u.display_name,
+      u.avatar_url,
+      up.gold_balance,
+      up.premium_currency,
+      up.power_score,
+      (COALESCE(up.gold_balance, 0) + COALESCE(up.premium_currency, 0) * 100) AS score_value
+    FROM users u
+    JOIN user_profiles up ON up.user_id = u.id
+    ORDER BY score_value DESC, up.gold_balance DESC, up.premium_currency DESC, u.id ASC
     ${fullList ? '' : 'LIMIT :limit'}
     `,
     fullList ? {} : { limit }
@@ -210,6 +229,7 @@ async function getLiveRanking(type, limit, fullList = false) {
   if (type === 'power') return getLivePowerRanking(limit, fullList);
   if (type === 'level') return getLiveLevelRanking(limit, fullList);
   if (type === 'vip') return getLiveVipRanking(limit, fullList);
+  if (type === 'wealth') return getLiveWealthRanking(limit, fullList);
   if (type === 'guild_power') return getLiveGuildPowerRanking(limit, fullList);
 
   throw new ApiError(400, 'Ranking type không hợp lệ');
@@ -257,10 +277,15 @@ function mapLiveRows(type, rows) {
       combatPower: row.combat_power != null ? Number(row.combat_power) : null,
       levelNumber: row.level_number != null ? Number(row.level_number) : null,
       realmName: row.realm_name || null,
+      realmOrder: row.realm_order != null ? Number(row.realm_order) : null,
       currentVipLevelId: row.current_vip_level_id != null ? Number(row.current_vip_level_id) : null,
       totalTopupAmount: row.total_topup_amount != null ? Number(row.total_topup_amount) : null,
       vipExp: row.vip_exp != null ? Number(row.vip_exp) : null,
       vipName: row.vip_name || null,
+      vipLevel: row.level_number != null ? Number(row.level_number) : null,
+      goldBalance: row.gold_balance != null ? Number(row.gold_balance) : null,
+      premiumCurrency: row.premium_currency != null ? Number(row.premium_currency) : null,
+      powerScore: row.power_score != null ? Number(row.power_score) : null,
     },
   }));
 }
@@ -290,27 +315,30 @@ async function listRankings(type, limit = 20, preferSnapshot = true) {
   };
 }
 
-async function getMyRanking(type, userId) {
+async function getMyRanking(type, userId, preferSnapshot = true) {
   validateRankingType(type);
 
   if (type === 'guild_power') {
     throw new ApiError(400, 'guild_power không hỗ trợ route /me');
   }
 
-  const latestSnapshotAt = await getLatestSnapshotTime(type);
+  if (preferSnapshot) {
+    const latestSnapshotAt = await getLatestSnapshotTime(type);
 
-  if (latestSnapshotAt) {
-    const snapshotRows = await getSnapshotRanking(type, 1000, latestSnapshotAt);
-    const foundSnapshot = snapshotRows.find((item) => {
-      const payloadUserId = item?.data?.userId != null ? Number(item.data.userId) : null;
-      return Number(item.entityId) === Number(userId) || payloadUserId === Number(userId);
-    });
+    if (latestSnapshotAt) {
+      const snapshotRows = await getSnapshotRanking(type, 1000, latestSnapshotAt);
+      const foundSnapshot = snapshotRows.find((item) => {
+        const payloadUserId = item?.data?.userId != null ? Number(item.data.userId) : null;
+        const payloadEntityId = item?.data?.entity_id != null ? Number(item.data.entity_id) : null;
+        return Number(item.entityId) === Number(userId) || payloadUserId === Number(userId) || payloadEntityId === Number(userId);
+      });
 
-    if (foundSnapshot) {
-      return {
-        source: 'snapshot',
-        ...foundSnapshot,
-      };
+      if (foundSnapshot) {
+        return {
+          source: 'snapshot',
+          ...foundSnapshot,
+        };
+      }
     }
   }
 
