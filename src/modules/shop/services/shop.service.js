@@ -22,6 +22,15 @@ function normalizeRequiredNumber(value, fieldName) {
   return parsed;
 }
 
+function formatAmount(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return '0';
+
+  return number.toLocaleString('vi-VN', {
+    maximumFractionDigits: 0,
+  });
+}
+
 // =========================
 // USER-FACING
 // =========================
@@ -120,13 +129,77 @@ async function buyItem({ userId, shopItemId, quantity = 1 }) {
     const profile = profileRows[0];
     const totalGold = Number(shopItem.price_gold || 0) * quantity;
     const totalPremium = Number(shopItem.price_premium || 0) * quantity;
+    const currentGold = Number(profile.gold_balance || 0);
+    const currentPremium = Number(profile.premium_currency || 0);
+    const vipRequiredLevel = Number(shopItem.vip_required_level || 0);
 
-    if (Number(profile.gold_balance) < totalGold) {
-      throw new ApiError(400, 'Không đủ vàng');
+    if (vipRequiredLevel > 0) {
+      const vipRows = await queryWithConn(
+        conn,
+        `
+        SELECT COALESCE(vl.level_number, 0) AS vip_level
+        FROM user_vip uv
+        LEFT JOIN vip_levels vl ON vl.id = uv.current_vip_level_id
+        WHERE uv.user_id = :userId
+        LIMIT 1
+        `,
+        { userId }
+      );
+
+      const currentVipLevel = Number(vipRows[0]?.vip_level || 0);
+
+      if (currentVipLevel < vipRequiredLevel) {
+        throw new ApiError(
+          400,
+          `Chưa đủ yêu cầu VIP ${vipRequiredLevel} để mua vật phẩm này`
+        );
+      }
     }
 
-    if (Number(profile.premium_currency) < totalPremium) {
-      throw new ApiError(400, 'Không đủ premium currency');
+    if (shopItem.daily_purchase_limit !== null) {
+      const limit = Number(shopItem.daily_purchase_limit || 0);
+
+      if (limit > 0) {
+        const purchasedRows = await queryWithConn(
+          conn,
+          `
+          SELECT COALESCE(SUM(quantity), 0) AS purchased_today
+          FROM item_transactions
+          WHERE user_id = :userId
+            AND item_id = :itemId
+            AND transaction_type = 'buy_from_shop'
+            AND DATE(created_at) = CURDATE()
+          `,
+          {
+            userId,
+            itemId: shopItem.item_id,
+          }
+        );
+
+        const purchasedToday = Number(purchasedRows[0]?.purchased_today || 0);
+        const remainingToday = Math.max(0, limit - purchasedToday);
+
+        if (quantity > remainingToday) {
+          throw new ApiError(
+            400,
+            `Vượt giới hạn mua hôm nay. Còn có thể mua ${remainingToday} vật phẩm.`
+          );
+        }
+      }
+    }
+
+    if (currentGold < totalGold) {
+      throw new ApiError(
+        400,
+        `Không đủ tiền để mua vật phẩm. Cần ${formatAmount(totalGold)} vàng, hiện có ${formatAmount(currentGold)} vàng.`
+      );
+    }
+
+    if (currentPremium < totalPremium) {
+      throw new ApiError(
+        400,
+        `Không đủ tiền để mua vật phẩm. Cần ${formatAmount(totalPremium)} ngọc, hiện có ${formatAmount(currentPremium)} ngọc.`
+      );
     }
 
     await conn.query(

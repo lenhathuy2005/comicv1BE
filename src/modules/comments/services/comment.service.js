@@ -141,11 +141,14 @@ async function listComicComments({ comicId, page = 1, limit = 20, sort = 'newest
       c.report_count,
       c.created_at,
       c.updated_at,
+      ch.title AS chapter_title,
+      ch.chapter_number,
       u.username,
       u.display_name,
       u.avatar_url
     FROM comments c
     INNER JOIN users u ON u.id = c.user_id
+    LEFT JOIN chapters ch ON ch.id = c.chapter_id
     WHERE c.comic_id = :comicId
       AND c.parent_comment_id IS NULL
       AND c.comment_status = 'visible'
@@ -229,11 +232,14 @@ async function listChapterComments({ chapterId, page = 1, limit = 20, sort = 'ne
       c.report_count,
       c.created_at,
       c.updated_at,
+      ch.title AS chapter_title,
+      ch.chapter_number,
       u.username,
       u.display_name,
       u.avatar_url
     FROM comments c
     INNER JOIN users u ON u.id = c.user_id
+    LEFT JOIN chapters ch ON ch.id = c.chapter_id
     WHERE c.chapter_id = :chapterId
       AND c.parent_comment_id IS NULL
       AND c.comment_status = 'visible'
@@ -397,7 +403,7 @@ async function createComment({ userId, comicId, chapterId, parentCommentId = nul
     }
   }
 
-  await query(
+  const insertResult = await query(
     `
     INSERT INTO comments (
       user_id,
@@ -433,6 +439,8 @@ async function createComment({ userId, comicId, chapterId, parentCommentId = nul
     }
   );
 
+  const createdId = Number(insertResult.insertId);
+
   const createdRows = await query(
     `
     SELECT
@@ -447,14 +455,18 @@ async function createComment({ userId, comicId, chapterId, parentCommentId = nul
       c.report_count,
       c.created_at,
       c.updated_at,
+      ch.title AS chapter_title,
+      ch.chapter_number,
       u.username,
       u.display_name,
       u.avatar_url
     FROM comments c
     INNER JOIN users u ON u.id = c.user_id
-    WHERE c.id = LAST_INSERT_ID()
+    LEFT JOIN chapters ch ON ch.id = c.chapter_id
+    WHERE c.id = :createdId
     LIMIT 1
-    `
+    `,
+    { createdId }
   );
 
   return createdRows[0];
