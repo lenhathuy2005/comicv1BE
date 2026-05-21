@@ -2,17 +2,31 @@ const { query, queryWithConn, transaction } = require('../../../config/database'
 const ApiError = require('../../../utils/ApiError');
 
 async function listMyNotifications(userId, filters = {}) {
+  const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 100);
+  const isRead = filters.isRead ?? null;
+
   return query(
-    `SELECT *
-     FROM user_notifications
-     WHERE user_id = :userId
-       AND (:isRead IS NULL OR is_read = :isRead)
-     ORDER BY created_at DESC
+    `SELECT
+        un.*,
+        COALESCE(un.type_code, 'NEW_CHAPTER') AS type_code,
+        un.comic_id,
+        un.chapter_id,
+        c.title AS comic_title,
+        ch.chapter_number,
+        ch.title AS chapter_title
+     FROM user_notifications un
+     INNER JOIN comics c ON c.id = un.comic_id AND c.deleted_at IS NULL
+     INNER JOIN chapters ch ON ch.id = un.chapter_id AND ch.deleted_at IS NULL
+     INNER JOIN follows f ON f.comic_id = un.comic_id AND f.user_id = :userId
+     WHERE un.user_id = :userId
+       AND COALESCE(un.type_code, 'NEW_CHAPTER') = 'NEW_CHAPTER'
+       AND (:isRead IS NULL OR un.is_read = :isRead)
+     ORDER BY un.created_at DESC
      LIMIT :limit`,
     {
       userId,
-      isRead: filters.isRead ?? null,
-      limit: Number(filters.limit || 50),
+      isRead,
+      limit,
     }
   );
 }

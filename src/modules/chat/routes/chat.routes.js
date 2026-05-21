@@ -4,8 +4,8 @@ const { requireAuth, requireRole } = require('../../../middlewares/auth.middlewa
 
 const router = express.Router();
 
-router.get('/rooms', controller.listRooms);
-router.get('/rooms/:roomId/messages', controller.getRoomMessages);
+router.get('/rooms', requireAuth, controller.listRooms);
+router.get('/rooms/:roomId/messages', requireAuth, controller.getRoomMessages);
 router.post('/rooms/:roomId/messages', requireAuth, controller.sendMessage);
 
 router.get('/admin/rooms', requireAuth, requireRole('admin'), controller.listRoomsAdmin);

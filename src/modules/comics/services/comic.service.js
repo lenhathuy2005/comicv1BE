@@ -1,6 +1,43 @@
 const { query, transaction } = require('../../../config/database');
 const ApiError = require('../../../utils/ApiError');
 
+function normalizeVietnameseSearch(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd');
+}
+
+function vietnameseFoldSql(expr) {
+  const replacements = [
+    ['à','a'], ['á','a'], ['ạ','a'], ['ả','a'], ['ã','a'],
+    ['â','a'], ['ầ','a'], ['ấ','a'], ['ậ','a'], ['ẩ','a'], ['ẫ','a'],
+    ['ă','a'], ['ằ','a'], ['ắ','a'], ['ặ','a'], ['ẳ','a'], ['ẵ','a'],
+    ['è','e'], ['é','e'], ['ẹ','e'], ['ẻ','e'], ['ẽ','e'],
+    ['ê','e'], ['ề','e'], ['ế','e'], ['ệ','e'], ['ể','e'], ['ễ','e'],
+    ['ì','i'], ['í','i'], ['ị','i'], ['ỉ','i'], ['ĩ','i'],
+    ['ò','o'], ['ó','o'], ['ọ','o'], ['ỏ','o'], ['õ','o'],
+    ['ô','o'], ['ồ','o'], ['ố','o'], ['ộ','o'], ['ổ','o'], ['ỗ','o'],
+    ['ơ','o'], ['ờ','o'], ['ớ','o'], ['ợ','o'], ['ở','o'], ['ỡ','o'],
+    ['ù','u'], ['ú','u'], ['ụ','u'], ['ủ','u'], ['ũ','u'],
+    ['ư','u'], ['ừ','u'], ['ứ','u'], ['ự','u'], ['ử','u'], ['ữ','u'],
+    ['ỳ','y'], ['ý','y'], ['ỵ','y'], ['ỷ','y'], ['ỹ','y'],
+    ['đ','d'],
+  ];
+
+  let result = `LOWER(IFNULL(${expr}, ''))`;
+
+  for (const [from, to] of replacements) {
+    result = `REPLACE(${result}, '${from}', '${to}')`;
+  }
+
+  return result;
+}
+
+
 function buildComicSort(sort) {
   const value = String(sort || '').trim().toLowerCase();
 
@@ -28,6 +65,10 @@ function buildComicSort(sort) {
 }
 
 function buildComicSelect(orderBySql, limitSql = 'LIMIT :limit OFFSET :offset') {
+  const titleSearchSql = vietnameseFoldSql('c.title');
+  const slugSearchSql = vietnameseFoldSql('c.slug');
+  const authorSearchSql = vietnameseFoldSql('a.name');
+
   return `SELECT c.id, c.title, c.slug, c.cover_image_url, c.banner_image_url, c.summary,
             c.publication_status, c.visibility_status, c.age_rating, c.total_views, c.total_follows,
             c.created_at, c.updated_at,
@@ -41,7 +82,25 @@ function buildComicSelect(orderBySql, limitSql = 'LIMIT :limit OFFSET :offset') 
      LEFT JOIN comic_genres cg ON cg.comic_id = c.id
      LEFT JOIN genres g ON g.id = cg.genre_id
      LEFT JOIN follows f ON f.comic_id = c.id
-     WHERE (:keyword IS NULL OR c.title LIKE CONCAT('%', :keyword, '%') OR c.slug LIKE CONCAT('%', :keyword, '%') OR a.name LIKE CONCAT('%', :keyword, '%'))
+     WHERE (
+       :keyword IS NULL
+       OR c.title LIKE CONCAT('%', :keyword, '%')
+       OR c.slug LIKE CONCAT('%', :keyword, '%')
+       OR a.name LIKE CONCAT('%', :keyword, '%')
+       OR ${titleSearchSql} LIKE CONCAT('%', :keywordNormalized, '%')
+       OR ${slugSearchSql} LIKE CONCAT('%', :keywordNormalized, '%')
+       OR ${authorSearchSql} LIKE CONCAT('%', :keywordNormalized, '%')
+       OR EXISTS (
+         SELECT 1
+         FROM comic_genres cg_keyword
+         JOIN genres g_keyword ON g_keyword.id = cg_keyword.genre_id
+         WHERE cg_keyword.comic_id = c.id
+           AND (
+             g_keyword.name LIKE CONCAT('%', :keyword, '%')
+             OR ${vietnameseFoldSql('g_keyword.name')} LIKE CONCAT('%', :keywordNormalized, '%')
+           )
+       )
+     )
        AND (:publicationStatus IS NULL OR c.publication_status = :publicationStatus)
        AND (:genreId IS NULL OR EXISTS (
          SELECT 1
@@ -91,11 +150,15 @@ async function listComics(filters, currentUserId = null) {
   const limit = Math.min(Math.max(Number(filters.limit || 20), 1), 100);
   const offset = (page - 1) * limit;
   const orderBySql = buildComicSort(filters.sort || filters.orderBy);
+  const rawKeyword = String(filters.keyword || filters.q || '').trim();
+  const keyword = rawKeyword || null;
+  const keywordNormalized = rawKeyword ? normalizeVietnameseSearch(rawKeyword) : null;
 
   const rows = await query(
     buildComicSelect(orderBySql),
     {
-      keyword: filters.keyword || filters.q || null,
+      keyword,
+      keywordNormalized,
       publicationStatus: filters.publicationStatus || filters.publication_status || null,
       genreId: filters.genreId || filters.genre_id || null,
       genreSlug: filters.genreSlug || filters.genre_slug || filters.genre || null,
@@ -111,11 +174,15 @@ async function listComics(filters, currentUserId = null) {
 async function listComicRankings(filters, currentUserId = null) {
   const limit = Math.min(Math.max(Number(filters.limit || 20), 1), 100);
   const orderBySql = buildComicSort(filters.sort || 'hot');
+  const rawKeyword = String(filters.keyword || filters.q || '').trim();
+  const keyword = rawKeyword || null;
+  const keywordNormalized = rawKeyword ? normalizeVietnameseSearch(rawKeyword) : null;
 
   const rows = await query(
     buildComicSelect(orderBySql, 'LIMIT :limit'),
     {
-      keyword: filters.keyword || filters.q || null,
+      keyword,
+      keywordNormalized,
       publicationStatus: filters.publicationStatus || filters.publication_status || null,
       genreId: filters.genreId || filters.genre_id || null,
       genreSlug: filters.genreSlug || filters.genre_slug || filters.genre || null,

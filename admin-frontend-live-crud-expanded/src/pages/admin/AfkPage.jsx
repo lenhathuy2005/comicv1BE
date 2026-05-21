@@ -62,6 +62,12 @@ const recommendedConfigs = [
     value_type: 'int',
     description: 'Tổng số phút AFK tối đa được tính thưởng mỗi ngày',
   },
+  {
+    config_key: 'afk_banner_image_url',
+    config_value: '/uploads/afk/afk-banner.png',
+    value_type: 'string',
+    description: 'Ảnh banner hiển thị ở màn AFK trên mobile. Có thể dùng URL đầy đủ hoặc đường dẫn /uploads/...',
+  },
 ];
 
 const configLabelMap = {
@@ -73,6 +79,7 @@ const configLabelMap = {
   afk_min_minutes_to_claim: 'Phút tối thiểu',
   afk_max_minutes_per_session: 'Giới hạn phiên',
   afk_daily_max_minutes: 'Giới hạn ngày',
+  afk_banner_image_url: 'Ảnh AFK',
 };
 
 function getConfigDisplayName(key) {

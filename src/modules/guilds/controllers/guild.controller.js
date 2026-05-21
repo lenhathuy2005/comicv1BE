@@ -30,6 +30,12 @@ exports.getGuildDetailAggregate = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, data, 'Lấy tổng quan bang thành công');
 });
 
+exports.getMyGuildProfile = asyncHandler(async (req, res) => {
+  const userId = resolveCurrentUserId(req);
+  const data = await guildService.getMyGuildProfile(userId);
+  return ApiResponse.success(res, data, data ? 'Lấy hồ sơ bang hội của tôi thành công' : 'Bạn chưa tham gia bang hội nào');
+});
+
 exports.getGuildCreationRequirements = asyncHandler(async (_req, res) => {
   const data = await guildService.getGuildCreationRequirements();
   return ApiResponse.success(res, data, 'Lấy điều kiện tạo bang thành công');
@@ -136,6 +142,35 @@ exports.leaveGuild = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, data, 'Rời bang thành công');
 });
 
+
+exports.disbandGuild = asyncHandler(async (req, res) => {
+  const userId = resolveCurrentUserId(req);
+  const data = await guildService.disbandGuild({
+    guildId: req.params.id,
+    userId,
+  });
+  return ApiResponse.success(res, data, 'Giải tán bang thành công');
+});
+
+exports.checkinGuild = asyncHandler(async (req, res) => {
+  const userId = resolveCurrentUserId(req);
+  const data = await guildService.checkinGuild({
+    guildId: req.params.id,
+    userId,
+  });
+  return ApiResponse.success(res, data, 'Điểm danh bang thành công');
+});
+
+
+exports.contributeToGuild = asyncHandler(async (req, res) => {
+  const userId = resolveCurrentUserId(req);
+  const data = await guildService.contributeToGuild({
+    guildId: req.params.id,
+    userId,
+  });
+  return ApiResponse.success(res, data, 'Cống hiến bang thành công');
+});
+
 exports.updateGuild = asyncHandler(async (req, res) => {
   const userId = resolveCurrentUserId(req);
   const data = await guildService.updateGuild({
@@ -143,9 +178,13 @@ exports.updateGuild = asyncHandler(async (req, res) => {
     userId,
     name: req.body.name,
     slug: req.body.slug,
-    logoUrl: req.body.logo_url,
+    logoUrl: req.body.logo_url ?? req.body.logoUrl,
     description: req.body.description,
-    memberLimit: req.body.member_limit,
+    announcement: req.body.announcement,
+    memberLimit: req.body.member_limit ?? req.body.memberLimit,
+    joinRequirementText: req.body.join_requirement_text ?? req.body.joinRequirementText,
+    joinMinLevel: req.body.join_min_level ?? req.body.joinMinLevel,
+    joinMinPower: req.body.join_min_power ?? req.body.joinMinPower,
     guildStatus: req.body.guild_status,
   });
   return ApiResponse.success(res, data, 'Cập nhật bang thành công');
@@ -160,4 +199,15 @@ exports.updateGuildAnnouncement = asyncHandler(async (req, res) => {
     announcement: req.body.announcement,
   });
   return ApiResponse.success(res, data, 'Cập nhật thông báo bang thành công');
+});
+
+exports.updateGuildMemberRole = asyncHandler(async (req, res) => {
+  const actorUserId = resolveCurrentUserId(req);
+  const data = await guildService.updateGuildMemberRole({
+    guildId: req.params.id,
+    memberId: req.params.memberId,
+    actorUserId,
+    roleCode: req.body.role_code ?? req.body.roleCode,
+  });
+  return ApiResponse.success(res, data, 'Cập nhật chức vụ thành viên thành công');
 });

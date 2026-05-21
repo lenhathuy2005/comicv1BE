@@ -1,6 +1,86 @@
 const { query, queryWithConn, transaction } = require('../../../config/database');
 const ApiError = require('../../../utils/ApiError');
 
+const DEFAULT_AFK_CONFIGS = [
+  {
+    config_key: 'afk_enabled',
+    config_value: 'true',
+    value_type: 'bool',
+    description: 'Bật hoặc tắt toàn bộ hệ thống AFK',
+  },
+  {
+    config_key: 'afk_exp_per_minute',
+    config_value: '10',
+    value_type: 'decimal',
+    description: 'EXP cơ bản nhận được mỗi phút AFK',
+  },
+  {
+    config_key: 'afk_gold_per_minute',
+    config_value: '2',
+    value_type: 'decimal',
+    description: 'Vàng cơ bản nhận được mỗi phút AFK',
+  },
+  {
+    config_key: 'afk_bonus_percent',
+    config_value: '0',
+    value_type: 'decimal',
+    description: 'Phần trăm thưởng cộng thêm chung cho AFK',
+  },
+  {
+    config_key: 'afk_vip_bonus_percent',
+    config_value: '20',
+    value_type: 'decimal',
+    description: 'Phần trăm thưởng cộng thêm cho tài khoản VIP',
+  },
+  {
+    config_key: 'afk_min_minutes_to_claim',
+    config_value: '1',
+    value_type: 'int',
+    description: 'Số phút tối thiểu cần AFK để được nhận thưởng',
+  },
+  {
+    config_key: 'afk_max_minutes_per_session',
+    config_value: '480',
+    value_type: 'int',
+    description: 'Số phút tối đa được tính thưởng trong một phiên AFK',
+  },
+  {
+    config_key: 'afk_daily_max_minutes',
+    config_value: '720',
+    value_type: 'int',
+    description: 'Tổng số phút AFK tối đa được tính thưởng mỗi ngày',
+  },
+  {
+    config_key: 'afk_banner_image_url',
+    config_value: '/uploads/afk/afk-banner.png',
+    value_type: 'string',
+    description: 'Ảnh banner hiển thị ở màn AFK mobile',
+  },
+];
+
+function mergeDefaultAfkConfigs(rows) {
+  const existingKeys = new Set(rows.map((row) => row.config_key));
+  const output = [...rows];
+
+  let virtualId = -1;
+
+  for (const item of DEFAULT_AFK_CONFIGS) {
+    if (existingKeys.has(item.config_key)) continue;
+
+    output.push({
+      id: virtualId,
+      ...item,
+      created_at: null,
+      updated_at: null,
+    });
+
+    virtualId -= 1;
+  }
+
+  return output;
+}
+
+
 function calculateDurationSeconds(startedAt, endedAt = new Date()) {
   const start = new Date(startedAt).getTime();
   const end = new Date(endedAt).getTime();
@@ -131,7 +211,7 @@ async function listConfigs() {
     ORDER BY id ASC
   `);
 
-  return rows.map((row) => ({
+  return mergeDefaultAfkConfigs(rows).map((row) => ({
     ...row,
     parsed_value: parseConfigValue(row.config_value, row.value_type),
   }));
@@ -163,7 +243,7 @@ async function getAfkConfigMap() {
 
   const map = {};
 
-  for (const row of rows) {
+  for (const row of mergeDefaultAfkConfigs(rows)) {
     map[row.config_key] = parseConfigValue(
       row.config_value,
       row.value_type

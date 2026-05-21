@@ -2,13 +2,27 @@ const ApiResponse = require('../../../utils/apiResponse');
 const asyncHandler = require('../../../utils/asyncHandler');
 const chatService = require('../services/chat.service');
 
+function resolveCurrentUserId(req) {
+  return (
+    req.user?.id ||
+    req.user?.userId ||
+    req.user?.user_id ||
+    req.auth?.id ||
+    req.auth?.userId ||
+    req.auth?.user_id ||
+    null
+  );
+}
+
 exports.listRooms = asyncHandler(async (req, res) => {
-  const data = await chatService.listRooms(req.query);
+  const userId = resolveCurrentUserId(req);
+  const data = await chatService.listRooms(req.query, userId);
   return ApiResponse.success(res, data, 'Lấy danh sách room chat thành công');
 });
 
 exports.getRoomMessages = asyncHandler(async (req, res) => {
-  const data = await chatService.getRoomMessages(req.params.roomId, req.query.limit);
+  const userId = resolveCurrentUserId(req);
+  const data = await chatService.getRoomMessages(req.params.roomId, req.query.limit, userId);
   return ApiResponse.success(res, data, 'Lấy danh sách tin nhắn thành công');
 });
 

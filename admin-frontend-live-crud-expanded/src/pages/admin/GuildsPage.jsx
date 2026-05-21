@@ -125,7 +125,7 @@ export default function GuildsPage() {
   };
 
   const deleteGuild = async (item) => {
-    if (!window.confirm(`Xóa bang phái ${item.name}?`)) return;
+    if (!window.confirm(`Xóa vĩnh viễn bang phái ${item.name}? Bang, thành viên và kênh chat bang sẽ biến mất khỏi hệ thống.`)) return;
     try {
       await apiRequest(`/api/admin/guilds/${item.id}`, { method: 'DELETE' });
       await loadData();
@@ -225,7 +225,7 @@ export default function GuildsPage() {
                     <div className="readdy-inline-meta"><span className="readdy-chip chip-mint">Cấp {item.level}</span> Thành lập: {formatDateTime(item.created_at)}</div>
                     <div className="readdy-actions-inline">
                       <button className="icon-btn teal" onClick={() => openEditGuild(item)}>✎</button>
-                      <button className="icon-btn red" onClick={() => deleteGuild(item)}>🗑</button>
+                      <button className="icon-btn red" title="Xóa vĩnh viễn bang phái" onClick={() => deleteGuild(item)}>🗑</button>
                     </div>
                   </div>
                 </div>
@@ -250,7 +250,7 @@ export default function GuildsPage() {
         <div className="form-grid-two">
           <label className="form-span-2">Tên bang<input value={guildForm.name} onChange={(event) => setGuildForm((prev) => ({ ...prev, name: event.target.value }))} /></label>
           <label>Bang chủ<select value={guildForm.leader_user_id} onChange={(event) => setGuildForm((prev) => ({ ...prev, leader_user_id: event.target.value }))}><option value="">Chọn người dùng</option>{data.users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select></label>
-          <label>Trạng thái<select value={guildForm.guild_status} onChange={(event) => setGuildForm((prev) => ({ ...prev, guild_status: event.target.value }))}><option value="active">active</option><option value="locked">locked</option><option value="disbanded">disbanded</option></select></label>
+          <label>Trạng thái<select value={guildForm.guild_status} onChange={(event) => setGuildForm((prev) => ({ ...prev, guild_status: event.target.value }))}><option value="active">active</option><option value="locked">locked</option></select></label>
           <label>Giới hạn thành viên<input type="number" value={guildForm.member_limit} onChange={(event) => setGuildForm((prev) => ({ ...prev, member_limit: event.target.value }))} /></label>
           <label>Cấp bang<input type="number" value={guildForm.level} onChange={(event) => setGuildForm((prev) => ({ ...prev, level: event.target.value }))} /></label>
           <label>Contribution<input type="number" value={guildForm.contribution_points} onChange={(event) => setGuildForm((prev) => ({ ...prev, contribution_points: event.target.value }))} /></label>

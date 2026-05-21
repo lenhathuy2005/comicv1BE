@@ -1,22 +1,187 @@
 const { query, transaction } = require('../../../config/database');
 const ApiError = require('../../../utils/ApiError');
 
-async function listRooms(filters = {}) {
+
+async function getActiveGuildForUser(userId) {
+  if (!userId) return null;
+
+  const rows = await query(
+    `
+    SELECT
+      g.id,
+      g.name,
+      g.slug,
+      gm.guild_role_id,
+      gr.code AS role_code
+    FROM guild_members gm
+    INNER JOIN guilds g ON g.id = gm.guild_id
+    LEFT JOIN guild_roles gr ON gr.id = gm.guild_role_id
+    WHERE gm.user_id = :userId
+      AND gm.join_status = 'active'
+      AND g.guild_status = 'active'
+    ORDER BY gm.joined_at DESC, gm.id DESC
+    LIMIT 1
+    `,
+    { userId }
+  );
+
+  return rows[0] || null;
+}
+
+function safeGuildChatCode(guild) {
+  const source = String(guild.slug || guild.name || `guild-${guild.id}`)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || `guild-${guild.id}`;
+
+  return `guild-${source}-${guild.id}`.slice(0, 100);
+}
+
+async function ensureGuildChatRoomForUser(userId) {
+  const guild = await getActiveGuildForUser(userId);
+  if (!guild) return null;
+
+  const existing = await query(
+    `
+    SELECT id
+    FROM chat_rooms
+    WHERE room_type = 'guild'
+      AND linked_guild_id = :guildId
+      AND is_active = 1
+    ORDER BY id ASC
+    LIMIT 1
+    `,
+    { guildId: guild.id }
+  );
+
+  let roomId = existing[0]?.id || null;
+
+  if (!roomId) {
+    const code = safeGuildChatCode(guild);
+    const result = await query(
+      `
+      INSERT INTO chat_rooms (
+        room_type, name, code, description, linked_guild_id, min_vip_level_id,
+        is_active, created_by_user_id, created_at, updated_at
+      ) VALUES (
+        'guild', :name, :code, :description, :guildId, NULL,
+        1, :userId, NOW(), NOW()
+      )
+      `,
+      {
+        name: `Chat ${guild.name}`,
+        code,
+        description: `Kênh chat nội bộ bang ${guild.name}`,
+        guildId: guild.id,
+        userId,
+      }
+    );
+
+    roomId = result.insertId;
+  }
+
+  await query(
+    `
+    INSERT INTO chat_room_members (room_id, user_id, member_role, joined_at, is_active)
+    VALUES (:roomId, :userId, :memberRole, NOW(), 1)
+    ON DUPLICATE KEY UPDATE
+      member_role = VALUES(member_role),
+      is_active = 1
+    `,
+    {
+      roomId,
+      userId,
+      memberRole: guild.role_code === 'leader' ? 'owner' : 'member',
+    }
+  );
+
+  return guild;
+}
+
+async function canAccessGuildRoom(room, userId) {
+  if (room.room_type !== 'guild') return true;
+  if (!userId || !room.linked_guild_id) return false;
+
+  const guild = await getActiveGuildForUser(userId);
+  return Boolean(guild && Number(guild.id) === Number(room.linked_guild_id));
+}
+
+async function getRoomForAccess(roomId, userId = null) {
+  const roomRows = await query(
+    `
+    SELECT cr.*, g.name AS guild_name, vl.name AS min_vip_name
+    FROM chat_rooms cr
+    LEFT JOIN guilds g ON g.id = cr.linked_guild_id
+    LEFT JOIN vip_levels vl ON vl.id = cr.min_vip_level_id
+    WHERE cr.id = :roomId
+      AND cr.is_active = 1
+    LIMIT 1
+    `,
+    { roomId }
+  );
+
+  if (!roomRows.length) throw new ApiError(404, 'Không tìm thấy phòng chat');
+
+  const room = roomRows[0];
+
+  if (room.room_type === 'guild') {
+    const ok = await canAccessGuildRoom(room, userId);
+    if (!ok) {
+      throw new ApiError(403, 'Bạn chưa tham gia bang hội này nên không thể xem chat bang');
+    }
+  }
+
+  return room;
+}
+
+async function listRooms(filters = {}, userId = null) {
+  const roomType = filters.roomType || filters.room_type || null;
+  const myGuild = await ensureGuildChatRoomForUser(userId);
+  const myGuildId = myGuild ? Number(myGuild.id) : null;
+
   return query(
-    `SELECT cr.*, g.name AS guild_name, vl.name AS min_vip_name
-     FROM chat_rooms cr
-     LEFT JOIN guilds g ON g.id = cr.linked_guild_id
-     LEFT JOIN vip_levels vl ON vl.id = cr.min_vip_level_id
-     WHERE (:roomType IS NULL OR cr.room_type = :roomType)
-       AND cr.is_active = 1
-     ORDER BY cr.id DESC`,
-    { roomType: filters.roomType || null }
+    `
+    SELECT
+      cr.*,
+      g.name AS guild_name,
+      vl.name AS min_vip_name,
+      COUNT(DISTINCT CASE WHEN crm.is_active = 1 THEN crm.id END) AS member_count,
+      COUNT(DISTINCT CASE WHEN cm.is_deleted = 0 THEN cm.id END) AS message_count,
+      MAX(CASE WHEN cm.is_deleted = 0 THEN cm.sent_at END) AS last_message_at
+    FROM chat_rooms cr
+    LEFT JOIN guilds g ON g.id = cr.linked_guild_id
+    LEFT JOIN vip_levels vl ON vl.id = cr.min_vip_level_id
+    LEFT JOIN chat_room_members crm ON crm.room_id = cr.id
+    LEFT JOIN chat_messages cm ON cm.room_id = cr.id
+    WHERE (:roomType IS NULL OR cr.room_type = :roomType)
+      AND cr.is_active = 1
+      AND (
+        cr.room_type <> 'guild'
+        OR (:myGuildId IS NOT NULL AND cr.linked_guild_id = :myGuildId)
+      )
+    GROUP BY cr.id, g.name, vl.name
+    ORDER BY
+      CASE cr.room_type
+        WHEN 'global' THEN 1
+        WHEN 'public' THEN 2
+        WHEN 'world' THEN 3
+        WHEN 'vip' THEN 4
+        WHEN 'guild' THEN 5
+        WHEN 'system' THEN 6
+        ELSE 7
+      END,
+      last_message_at DESC,
+      cr.id ASC
+    `,
+    { roomType, myGuildId }
   );
 }
 
-async function getRoomMessages(roomId, limit = 50) {
-  const roomRows = await query('SELECT * FROM chat_rooms WHERE id = :roomId LIMIT 1', { roomId });
-  if (!roomRows.length) throw new ApiError(404, 'Chat room not found');
+async function getRoomMessages(roomId, limit = 50, userId = null) {
+  const room = await getRoomForAccess(roomId, userId);
 
   const messages = await query(
     `SELECT cm.id, cm.room_id, cm.user_id, cm.reply_to_message_id, cm.message_type, cm.content,
@@ -29,19 +194,36 @@ async function getRoomMessages(roomId, limit = 50) {
      LIMIT :limit`,
     { roomId, limit: Number(limit) }
   );
-  return { room: roomRows[0], messages };
+  return { room, messages };
 }
 
 async function sendMessage(roomId, userId, payload) {
+  if (!userId) throw new ApiError(401, 'Unauthorized');
+
   return transaction(async (conn) => {
-    const roomRows = await query('SELECT * FROM chat_rooms WHERE id = :roomId AND is_active = 1 LIMIT 1', { roomId });
-    if (!roomRows.length) throw new ApiError(404, 'Chat room not found');
+    const room = await getRoomForAccess(roomId, userId);
+
+    const content = String(payload.content || '').trim();
+    if (!content) {
+      throw new ApiError(400, 'Nội dung tin nhắn không được để trống');
+    }
 
     const [result] = await conn.execute(
       `INSERT INTO chat_messages (room_id, user_id, reply_to_message_id, message_type, content)
        VALUES (?, ?, ?, ?, ?)`,
-      [roomId, userId, payload.replyToMessageId || null, payload.messageType || 'text', payload.content]
+      [room.id, userId, payload.replyToMessageId || null, payload.messageType || payload.message_type || 'text', content]
     );
+
+    const memberRole = room.room_type === 'guild' ? 'member' : 'member';
+    await conn.query(
+      `
+      INSERT INTO chat_room_members (room_id, user_id, member_role, joined_at, is_active)
+      VALUES (:roomId, :userId, :memberRole, NOW(), 1)
+      ON DUPLICATE KEY UPDATE is_active = 1
+      `,
+      { roomId: room.id, userId, memberRole }
+    );
+
     return { id: result.insertId };
   });
 }

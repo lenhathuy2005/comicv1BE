@@ -36,6 +36,137 @@ async function getFirstId(table, orderColumn, conn = null) {
   return rows[0]?.id || null;
 }
 
+
+function normalizeGuildSlug(value, fallback = 'bang-hoi') {
+  const from = 'àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ';
+  const to = 'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd';
+  let text = String(value || fallback).trim().toLowerCase();
+
+  for (let i = 0; i < from.length; i += 1) {
+    text = text.replaceAll(from[i], to[i]);
+  }
+
+  text = text
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  return text || fallback;
+}
+
+async function guildCheckinsTableExistsWithConn(conn) {
+  const rows = await queryWithConn(
+    conn,
+    `
+    SELECT COUNT(*) AS total
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'guild_checkins'
+    `
+  );
+
+  return Number(rows[0]?.total || 0) > 0;
+}
+
+async function createGuildChatRoomAdminWithConn(conn, guild) {
+  const existingRows = await queryWithConn(
+    conn,
+    `SELECT id FROM chat_rooms WHERE room_type = 'guild' AND linked_guild_id = :guildId LIMIT 1`,
+    { guildId: guild.id }
+  );
+
+  if (existingRows.length) return existingRows[0].id;
+
+  const baseCode = `guild-${normalizeGuildSlug(guild.slug || guild.name)}-${guild.id}`;
+  const [roomResult] = await conn.query(
+    `
+    INSERT INTO chat_rooms (
+      room_type,
+      name,
+      code,
+      description,
+      linked_guild_id,
+      is_active,
+      created_by_user_id,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      'guild',
+      :name,
+      :code,
+      :description,
+      :guildId,
+      1,
+      :createdByUserId,
+      NOW(),
+      NOW()
+    )
+    `,
+    {
+      name: `Chat ${guild.name}`,
+      code: baseCode,
+      description: `Kênh chat nội bộ bang ${guild.name}`,
+      guildId: guild.id,
+      createdByUserId: guild.leader_user_id || null,
+    }
+  );
+
+  return roomResult.insertId;
+}
+
+async function hardDeleteGuildAdminWithConn(conn, guildId) {
+  const guildRows = await queryWithConn(
+    conn,
+    `SELECT id, name FROM guilds WHERE id = :guildId LIMIT 1`,
+    { guildId }
+  );
+
+  if (!guildRows.length) {
+    throw new ApiError(404, 'Không tìm thấy bang phái');
+  }
+
+  const guild = guildRows[0];
+
+  await conn.query(
+    `
+    UPDATE users
+    SET current_guild_id = NULL,
+        updated_at = NOW()
+    WHERE current_guild_id = :guildId
+    `,
+    { guildId }
+  );
+
+  const roomRows = await queryWithConn(
+    conn,
+    `SELECT id FROM chat_rooms WHERE room_type = 'guild' AND linked_guild_id = :guildId`,
+    { guildId }
+  );
+
+  if (roomRows.length) {
+    const roomIds = roomRows.map((room) => Number(room.id)).filter(Boolean);
+    if (roomIds.length) {
+      await conn.query(`DELETE FROM chat_room_members WHERE room_id IN (?)`, [roomIds]);
+      await conn.query(`DELETE FROM chat_messages WHERE room_id IN (?)`, [roomIds]);
+      await conn.query(`DELETE FROM chat_rooms WHERE id IN (?)`, [roomIds]);
+    }
+  }
+
+  if (await guildCheckinsTableExistsWithConn(conn)) {
+    await conn.query(`DELETE FROM guild_checkins WHERE guild_id = :guildId`, { guildId });
+  }
+
+  await conn.query(`DELETE FROM guilds WHERE id = :guildId`, { guildId });
+
+  return {
+    id: Number(guildId),
+    name: guild.name,
+    deleted: true,
+    hard_deleted: true,
+  };
+}
+
 async function getDashboard() {
   const [users, comics, chapters, guilds, items, rooms, notifications, comments, vipLevels, missions, afkRunning] = await Promise.all([
     query(`SELECT COUNT(*) AS total,
@@ -52,7 +183,7 @@ async function getDashboard() {
            FROM chapters WHERE deleted_at IS NULL`),
     query(`SELECT COUNT(*) AS total,
                   SUM(CASE WHEN guild_status = 'active' THEN 1 ELSE 0 END) AS active
-           FROM guilds`),
+           FROM guilds WHERE guild_status <> 'disbanded'`),
     query(`SELECT COUNT(*) AS total,
                   SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active
            FROM items`),
@@ -94,6 +225,7 @@ async function getDashboard() {
      UNION ALL
      SELECT 'guild', g.id, g.name, g.created_at, 'Bang hội được tạo'
      FROM guilds g
+     WHERE g.guild_status <> 'disbanded'
      UNION ALL
      SELECT 'notification', sn.id, sn.title, sn.created_at, 'Tạo thông báo hệ thống'
      FROM system_notifications sn
@@ -513,7 +645,8 @@ async function listGuildsAdmin(filters = {}) {
      LEFT JOIN users u ON u.id = g.leader_user_id
      LEFT JOIN guild_members gm ON gm.guild_id = g.id AND gm.join_status = 'active'
      LEFT JOIN guild_join_requests gjr ON gjr.guild_id = g.id
-     WHERE (:q IS NULL OR CONCAT(IFNULL(g.name,''), ' ', IFNULL(g.slug,''), ' ', IFNULL(g.description,'')) LIKE :q)
+     WHERE g.guild_status <> 'disbanded'
+       AND (:q IS NULL OR CONCAT(IFNULL(g.name,''), ' ', IFNULL(g.slug,''), ' ', IFNULL(g.description,'')) LIKE :q)
      GROUP BY g.id, u.display_name
      ORDER BY g.id DESC`,
     { q }
@@ -522,20 +655,20 @@ async function listGuildsAdmin(filters = {}) {
     query(`SELECT gm.id, gm.guild_id, gm.user_id, gm.guild_role_id, gm.join_status, gm.contribution_points, gm.joined_at,
                   g.name AS guild_name, u.display_name AS user_name, gr.name AS role_name
            FROM guild_members gm
-           INNER JOIN guilds g ON g.id = gm.guild_id
+           INNER JOIN guilds g ON g.id = gm.guild_id AND g.guild_status <> 'disbanded'
            INNER JOIN users u ON u.id = gm.user_id
            INNER JOIN guild_roles gr ON gr.id = gm.guild_role_id
            ORDER BY gm.joined_at DESC`),
     query(`SELECT gjr.id, gjr.guild_id, gjr.user_id, gjr.request_message, gjr.request_status, gjr.reviewed_at, gjr.created_at,
                   g.name AS guild_name, u.display_name AS user_name
            FROM guild_join_requests gjr
-           INNER JOIN guilds g ON g.id = gjr.guild_id
+           INNER JOIN guilds g ON g.id = gjr.guild_id AND g.guild_status <> 'disbanded'
            INNER JOIN users u ON u.id = gjr.user_id
            ORDER BY gjr.created_at DESC`),
     query(`SELECT * FROM guild_roles ORDER BY hierarchy_level ASC, id ASC`),
     query(`SELECT gl.*, g.name AS guild_name, u.display_name AS user_name, target.display_name AS target_user_name
            FROM guild_logs gl
-           LEFT JOIN guilds g ON g.id = gl.guild_id
+           LEFT JOIN guilds g ON g.id = gl.guild_id AND g.guild_status <> 'disbanded'
            LEFT JOIN users u ON u.id = gl.user_id
            LEFT JOIN users target ON target.id = gl.target_user_id
            ORDER BY gl.created_at DESC
@@ -603,6 +736,28 @@ async function createGuildAdmin(actorUserId, payload = {}) {
       }
       await conn.query(`UPDATE users SET current_guild_id = :guildId, updated_at = NOW() WHERE id = :userId`, { guildId, userId: payload.leader_user_id });
     }
+
+    const chatRoomId = await createGuildChatRoomAdminWithConn(conn, {
+      id: guildId,
+      name: payload.name,
+      slug: payload.slug,
+      leader_user_id: Number(payload.leader_user_id),
+    });
+
+    if (chatRoomId && payload.leader_user_id) {
+      await conn.query(
+        `
+        INSERT INTO chat_room_members (room_id, user_id, member_role, joined_at, is_active)
+        VALUES (:roomId, :userId, 'owner', NOW(), 1)
+        ON DUPLICATE KEY UPDATE
+          member_role = 'owner',
+          is_active = 1,
+          muted_until = NULL
+        `,
+        { roomId: chatRoomId, userId: Number(payload.leader_user_id) }
+      );
+    }
+
     await conn.query(
       `INSERT INTO guild_logs (guild_id, user_id, action_type, details, created_at)
        VALUES (:guildId, :actorUserId, 'create', 'Tạo bang hội từ admin', NOW())`,
@@ -613,6 +768,10 @@ async function createGuildAdmin(actorUserId, payload = {}) {
 }
 
 async function updateGuildAdmin(id, payload = {}) {
+  if (payload.guild_status === 'disbanded') {
+    throw new ApiError(400, 'Không chuyển trạng thái disbanded. Hãy dùng nút Xóa để xoá hẳn bang phái');
+  }
+
   const rows = await query(`SELECT * FROM guilds WHERE id = :id LIMIT 1`, { id });
   if (!rows.length) throw new ApiError(404, 'Không tìm thấy bang phái');
   const current = rows[0];
@@ -642,8 +801,7 @@ async function updateGuildAdmin(id, payload = {}) {
 }
 
 async function deleteGuildAdmin(id) {
-  await query(`UPDATE guilds SET guild_status = 'disbanded', updated_at = NOW() WHERE id = :id`, { id });
-  return { id: Number(id), deleted: true };
+  return transaction(async (conn) => hardDeleteGuildAdminWithConn(conn, id));
 }
 
 async function createGuildRoleAdmin(payload = {}) {
@@ -1422,6 +1580,78 @@ async function getChapterAdminDetail(id) {
   return { ...rows[0], images };
 }
 
+
+async function notifyFollowersAboutNewChapter(conn, chapterId) {
+  const rows = await queryWithConn(
+    conn,
+    `SELECT
+       ch.id AS chapter_id,
+       ch.comic_id,
+       ch.chapter_number,
+       ch.title AS chapter_title,
+       c.title AS comic_title
+     FROM chapters ch
+     INNER JOIN comics c ON c.id = ch.comic_id AND c.deleted_at IS NULL
+     WHERE ch.id = :chapterId
+       AND ch.deleted_at IS NULL
+       AND ch.publish_status = 'published'
+     LIMIT 1`,
+    { chapterId }
+  );
+
+  if (!rows.length) return { sentCount: 0 };
+
+  const chapter = rows[0];
+  const chapterName = chapter.chapter_title || `Chapter ${chapter.chapter_number}`;
+  const title = `Truyện theo dõi có chương mới`;
+  const content = `${chapter.comic_title} vừa cập nhật ${chapterName}.`;
+
+  const [result] = await conn.query(
+    `INSERT INTO user_notifications (
+       user_id,
+       title,
+       content,
+       type_code,
+       comic_id,
+       chapter_id,
+       is_read,
+       created_at
+     )
+     SELECT
+       f.user_id,
+       :title,
+       :content,
+       'NEW_CHAPTER',
+       :comicId,
+       :chapterId,
+       0,
+       NOW()
+     FROM follows f
+     INNER JOIN users u ON u.id = f.user_id AND u.deleted_at IS NULL
+     WHERE f.comic_id = :comicId
+       AND NOT EXISTS (
+         SELECT 1
+         FROM user_notifications un
+         WHERE un.user_id = f.user_id
+           AND COALESCE(un.type_code, '') = 'NEW_CHAPTER'
+           AND un.comic_id = :comicId
+           AND un.chapter_id = :chapterId
+       )`,
+    {
+      title,
+      content,
+      comicId: chapter.comic_id,
+      chapterId: chapter.chapter_id,
+    }
+  );
+
+  return {
+    sentCount: Number(result.affectedRows || 0),
+    comicId: Number(chapter.comic_id),
+    chapterId: Number(chapter.chapter_id),
+  };
+}
+
 async function createChapterAdmin(payload = {}) {
   if (!payload.comic_id || payload.chapter_number === undefined || !payload.slug) throw new ApiError(400, 'comic_id, chapter_number và slug là bắt buộc');
   return transaction(async (conn) => {
@@ -1453,6 +1683,11 @@ async function createChapterAdmin(payload = {}) {
         );
       }
     }
+
+    if (String(payload.publish_status || 'draft') === 'published') {
+      await notifyFollowersAboutNewChapter(conn, chapterId);
+    }
+
     return { id: chapterId };
   });
 }
@@ -1462,6 +1697,8 @@ async function updateChapterAdmin(id, payload = {}) {
     const rows = await queryWithConn(conn, `SELECT * FROM chapters WHERE id = :id AND deleted_at IS NULL LIMIT 1`, { id });
     if (!rows.length) throw new ApiError(404, 'Không tìm thấy chapter');
     const current = rows[0];
+    const nextPublishStatus = payload.publish_status ?? current.publish_status;
+
     await conn.query(
       `UPDATE chapters
        SET comic_id = :comic_id, chapter_number = :chapter_number, title = :title, slug = :slug,
@@ -1492,6 +1729,11 @@ async function updateChapterAdmin(id, payload = {}) {
         });
       }
     }
+
+    if (String(nextPublishStatus) === 'published') {
+      await notifyFollowersAboutNewChapter(conn, id);
+    }
+
     return { id: Number(id) };
   });
 }
