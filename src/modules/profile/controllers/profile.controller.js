@@ -1,6 +1,14 @@
+const path = require('path');
 const ApiResponse = require('../../../utils/apiResponse');
 const asyncHandler = require('../../../utils/asyncHandler');
 const profileService = require('../services/profile.service');
+
+function normalizeUploadPath(file) {
+  if (!file) return null;
+  const filename = path.basename(file.filename || file.path || '');
+  if (!filename) return null;
+  return `/uploads/users/${filename}`;
+}
 
 exports.getMyProfile = asyncHandler(async (req, res) => {
   const data = await profileService.getMyProfile(req.user.id);
@@ -8,9 +16,11 @@ exports.getMyProfile = asyncHandler(async (req, res) => {
 });
 
 exports.updateMyProfile = asyncHandler(async (req, res) => {
+  const avatarFromFile = normalizeUploadPath(req.file);
+
   const data = await profileService.updateMyProfile(req.user.id, {
     display_name: req.body.display_name ?? req.body.displayName,
-    avatar_url: req.body.avatar_url ?? req.body.avatarUrl,
+    avatar_url: avatarFromFile ?? req.body.avatar_url ?? req.body.avatarUrl,
     full_name: req.body.full_name ?? req.body.fullName,
     phone_number: req.body.phone_number ?? req.body.phoneNumber,
     bio: req.body.bio,

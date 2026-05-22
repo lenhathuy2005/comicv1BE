@@ -66,11 +66,26 @@ function normalizeOtp(value) {
 function parseTokenMeta(tokenRow) {
   if (!tokenRow) return {};
   if (!tokenRow.meta_json) return {};
-  if (typeof tokenRow.meta_json === 'object') return tokenRow.meta_json;
+
+  let rawMeta = tokenRow.meta_json;
+
+  if (Buffer.isBuffer(rawMeta)) {
+    rawMeta = rawMeta.toString('utf8');
+  }
+
+  if (typeof rawMeta === 'object') return rawMeta;
+
+  if (typeof rawMeta !== 'string') return {};
+
   try {
-    return JSON.parse(tokenRow.meta_json);
+    return JSON.parse(rawMeta);
   } catch (_) {
-    return {};
+    // Một số MySQL driver có thể trả JSON dạng string bị escape 2 lần.
+    try {
+      return JSON.parse(JSON.parse(rawMeta));
+    } catch (_) {
+      return {};
+    }
   }
 }
 
@@ -261,15 +276,9 @@ async function forgotPassword(email, context = {}) {
 
     const user = users[0];
 
-    await conn.execute(
-      `UPDATE auth_tokens
-       SET revoked_at = NOW()
-       WHERE user_id = ?
-         AND token_type = 'reset_password'
-         AND used_at IS NULL
-         AND revoked_at IS NULL`,
-      [user.id]
-    );
+    // Không thu hồi OTP cũ ngay khi gửi OTP mới.
+    // Gmail thường gom nhiều mail cùng subject thành một thread, dễ làm người dùng mở nhầm mail.
+    // Với project/demo, cho phép mọi OTP chưa dùng trong 10 phút đều hợp lệ để tránh nhập đúng mã nhưng bị báo sai.
 
     const otp = String(randomInt(0, 1000000)).padStart(6, '0');
     const resetToken = generateOpaqueToken('reset_otp');
@@ -340,7 +349,6 @@ async function resetPassword(email, otp, newPassword) {
        WHERE user_id = :userId
          AND token_type = 'reset_password'
          AND used_at IS NULL
-         AND revoked_at IS NULL
        ORDER BY id DESC
        LIMIT 10`,
       { userId: user.id }
@@ -356,7 +364,7 @@ async function resetPassword(email, otp, newPassword) {
     });
 
     if (!matchedToken) {
-      throw new ApiError(400, 'OTP không hợp lệ. Hãy bấm gửi lại mã OTP mới nhất và nhập đúng 6 số trong email mới nhất.');
+      throw new ApiError(400, 'OTP không hợp lệ hoặc không thuộc tài khoản này. Hãy nhập đúng 6 số trong email OTP gần đây.');
     }
 
     if (tokenAgeMinutes(matchedToken) > 10) {
@@ -375,9 +383,11 @@ async function resetPassword(email, otp, newPassword) {
 
     await conn.execute(
       `UPDATE auth_tokens
-       SET used_at = NOW()
-       WHERE id = ?`,
-      [matchedToken.id]
+       SET used_at = NOW(), revoked_at = COALESCE(revoked_at, NOW())
+       WHERE user_id = ?
+         AND token_type = 'reset_password'
+         AND used_at IS NULL`,
+      [user.id]
     );
 
     await conn.execute(
@@ -418,15 +428,9 @@ async function requestChangePasswordOtp(userId, context = {}) {
     const cleanEmail = String(user.email || '').trim().toLowerCase();
     if (!cleanEmail) throw new ApiError(400, 'Tài khoản chưa có email để gửi OTP');
 
-    await conn.execute(
-      `UPDATE auth_tokens
-       SET revoked_at = NOW()
-       WHERE user_id = ?
-         AND token_type = 'change_password_otp'
-         AND used_at IS NULL
-         AND revoked_at IS NULL`,
-      [user.id]
-    );
+    // Không thu hồi OTP cũ ngay khi gửi OTP mới.
+    // Gmail có thể gộp nhiều OTP trong cùng một thread; nếu thu hồi mã cũ ngay,
+    // người dùng rất dễ nhập đúng mã đang nhìn thấy nhưng backend lại coi là sai.
 
     const otp = String(randomInt(0, 1000000)).padStart(6, '0');
     const otpToken = generateOpaqueToken('change_otp');
@@ -505,7 +509,6 @@ async function confirmChangePasswordWithOtp(userId, otp, newPassword) {
        WHERE user_id = :userId
          AND token_type = 'change_password_otp'
          AND used_at IS NULL
-         AND revoked_at IS NULL
        ORDER BY id DESC
        LIMIT 10`,
       { userId }
@@ -521,7 +524,7 @@ async function confirmChangePasswordWithOtp(userId, otp, newPassword) {
     });
 
     if (!matchedToken) {
-      throw new ApiError(400, 'OTP không hợp lệ. Hãy bấm gửi lại mã OTP mới nhất và nhập đúng 6 số trong email mới nhất.');
+      throw new ApiError(400, 'OTP không hợp lệ hoặc không thuộc tài khoản này. Hãy nhập đúng 6 số trong email OTP gần đây.');
     }
 
     if (tokenAgeMinutes(matchedToken) > 10) {
@@ -540,9 +543,11 @@ async function confirmChangePasswordWithOtp(userId, otp, newPassword) {
 
     await conn.execute(
       `UPDATE auth_tokens
-       SET used_at = NOW()
-       WHERE id = ?`,
-      [matchedToken.id]
+       SET used_at = NOW(), revoked_at = COALESCE(revoked_at, NOW())
+       WHERE user_id = ?
+         AND token_type = 'change_password_otp'
+         AND used_at IS NULL`,
+      [user.id]
     );
 
     await conn.execute(

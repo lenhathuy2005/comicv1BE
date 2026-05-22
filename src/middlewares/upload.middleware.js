@@ -15,6 +15,7 @@ ensureDir(path.join(uploadRoot, 'comics'));
 ensureDir(path.join(uploadRoot, 'chapters'));
 ensureDir(path.join(uploadRoot, 'items'));
 ensureDir(path.join(uploadRoot, 'guilds'));
+ensureDir(path.join(uploadRoot, 'users'));
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -22,7 +23,7 @@ const storage = multer.diskStorage({
       return cb(null, path.join(uploadRoot, 'comics'));
     }
 
-    if (file.fieldname === 'images' || file.fieldname === 'image') {
+    if (file.fieldname === 'images') {
       return cb(null, path.join(uploadRoot, 'chapters'));
     }
 
@@ -32,6 +33,10 @@ const storage = multer.diskStorage({
 
     if (file.fieldname === 'logo_image' || file.fieldname === 'guild_logo') {
       return cb(null, path.join(uploadRoot, 'guilds'));
+    }
+
+    if (file.fieldname === 'avatar_image' || file.fieldname === 'avatar') {
+      return cb(null, path.join(uploadRoot, 'users'));
     }
 
     return cb(null, uploadRoot);

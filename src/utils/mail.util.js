@@ -46,9 +46,11 @@ async function sendOtpEmail({ to, otp, purpose = 'reset_password' }) {
   const cleanTo = clean(to).toLowerCase();
   const isChangePassword = purpose === 'change_password';
 
+  // Đưa mã OTP vào subject để Gmail không gom nhiều OTP vào cùng một thread,
+  // tránh người dùng mở nhầm email cũ trong chuỗi hội thoại.
   const subject = isChangePassword
-    ? `[${appName}] Mã OTP đổi mật khẩu`
-    : `[${appName}] Mã OTP đặt lại mật khẩu`;
+    ? `[${appName}] Mã OTP đổi mật khẩu: ${otp}`
+    : `[${appName}] Mã OTP đặt lại mật khẩu: ${otp}`;
 
   const title = isChangePassword ? 'Xác nhận đổi mật khẩu' : 'Đặt lại mật khẩu';
   const intro = isChangePassword

@@ -225,6 +225,32 @@ async function ensureCanManageGuild(guildId, userId) {
   return member;
 }
 
+async function ensureCanManageMembers(guildId, userId) {
+  const member = await getActiveGuildMember(guildId, userId);
+
+  if (!member) {
+    throw new ApiError(403, 'Bạn không thuộc bang hội này');
+  }
+
+  if (!Boolean(member.can_manage_members) && !Boolean(member.can_manage_guild)) {
+    throw new ApiError(403, 'Bạn không có quyền quản lý thành viên bang');
+  }
+
+  return member;
+}
+
+function memberHierarchy(member) {
+  const raw = Number(member?.hierarchy_level || 9999);
+  return Number.isFinite(raw) ? raw : 9999;
+}
+
+function canActOnTargetMember(actorMember, targetMember) {
+  if (!actorMember || !targetMember) return false;
+  if (Number(actorMember.user_id) === Number(targetMember.user_id)) return false;
+  if (Boolean(actorMember.can_manage_guild)) return true;
+  return memberHierarchy(actorMember) < memberHierarchy(targetMember);
+}
+
 async function ensureCanPostNotice(guildId, userId) {
   const member = await getActiveGuildMember(guildId, userId);
 
@@ -1022,21 +1048,25 @@ async function requestJoinGuild({ userId, guildId, requestMessage = null }) {
       throw new ApiError(400, 'Bạn đã thuộc một bang hội');
     }
 
-    const pendingRows = await queryWithConn(
+    const existingRequestRows = await queryWithConn(
       conn,
       `
-      SELECT id
+      SELECT id, request_status
       FROM guild_join_requests
       WHERE guild_id = :guildId
         AND user_id = :userId
-        AND request_status = 'pending'
       LIMIT 1
       `,
       { guildId, userId }
     );
 
-    if (pendingRows.length) {
-      throw new ApiError(400, 'Bạn đã gửi yêu cầu tham gia bang hội này');
+    if (existingRequestRows.length && existingRequestRows[0].request_status === 'pending') {
+      return {
+        success: true,
+        already_pending: true,
+        request_id: Number(existingRequestRows[0].id),
+        message: 'Bạn đã gửi yêu cầu tham gia bang hội này. Vui lòng chờ người có quyền duyệt.',
+      };
     }
 
     await ensureGuildProfileColumnsWithConn(conn);
@@ -1105,33 +1135,78 @@ async function requestJoinGuild({ userId, guildId, requestMessage = null }) {
       throw new ApiError(400, `Cần chiến lực tối thiểu ${minPower} để xin vào bang`);
     }
 
+    let requestId = null;
+
+    if (existingRequestRows.length) {
+      requestId = Number(existingRequestRows[0].id);
+      await conn.query(
+        `
+        UPDATE guild_join_requests
+        SET request_status = 'pending',
+            request_message = :requestMessage,
+            reviewed_by_user_id = NULL,
+            reviewed_at = NULL,
+            created_at = NOW()
+        WHERE id = :requestId
+        `,
+        {
+          requestId,
+          requestMessage,
+        }
+      );
+    } else {
+      const [insertResult] = await conn.query(
+        `
+        INSERT INTO guild_join_requests (
+          guild_id,
+          user_id,
+          request_message,
+          request_status,
+          created_at
+        )
+        VALUES (
+          :guildId,
+          :userId,
+          :requestMessage,
+          'pending',
+          NOW()
+        )
+        `,
+        {
+          guildId,
+          userId,
+          requestMessage,
+        }
+      );
+      requestId = Number(insertResult.insertId || 0);
+    }
+
     await conn.query(
       `
-      INSERT INTO guild_join_requests (
+      INSERT INTO guild_logs (
         guild_id,
         user_id,
-        request_message,
-        request_status,
+        action_type,
+        target_user_id,
+        details,
         created_at
       )
       VALUES (
         :guildId,
         :userId,
-        :requestMessage,
-        'pending',
+        'join',
+        :userId,
+        'Gửi yêu cầu gia nhập bang hội',
         NOW()
       )
       `,
-      {
-        guildId,
-        userId,
-        requestMessage,
-      }
+      { guildId, userId }
     );
 
     return {
       success: true,
-      message: 'Gửi yêu cầu tham gia bang hội thành công',
+      request_id: requestId,
+      message: 'Gửi yêu cầu tham gia bang hội thành công. Vui lòng chờ người có quyền duyệt.',
     };
   });
 }
@@ -1218,7 +1293,8 @@ async function approveJoinRequest({ reviewerUserId, requestId }) {
         guild_role_id,
         join_status,
         contribution_points,
-        joined_at
+        joined_at,
+        left_at
       )
       VALUES (
         :guildId,
@@ -1226,8 +1302,14 @@ async function approveJoinRequest({ reviewerUserId, requestId }) {
         :memberRoleId,
         'active',
         0,
-        NOW()
+        NOW(),
+        NULL
       )
+      ON DUPLICATE KEY UPDATE
+        guild_role_id = VALUES(guild_role_id),
+        join_status = 'active',
+        joined_at = NOW(),
+        left_at = NULL
       `,
       {
         guildId: request.guild_id,
@@ -1462,6 +1544,7 @@ async function listGuildJoinRequests(guildId, userId) {
     LEFT JOIN users u ON u.id = gjr.user_id
     LEFT JOIN users reviewer ON reviewer.id = gjr.reviewed_by_user_id
     WHERE gjr.guild_id = :guildId
+      AND gjr.request_status = 'pending'
     ORDER BY gjr.created_at DESC
     `,
     { guildId }
@@ -2092,6 +2175,115 @@ async function updateGuild({
   });
 }
 
+
+async function kickGuildMember({ guildId, memberId, actorUserId }) {
+  if (!actorUserId) {
+    throw new ApiError(401, 'Không xác định được người dùng hiện tại');
+  }
+
+  return transaction(async (conn) => {
+    const actorMember = await ensureCanManageMembers(guildId, actorUserId);
+
+    const targetRows = await queryWithConn(
+      conn,
+      `
+      SELECT
+        gm.id,
+        gm.user_id,
+        gm.guild_role_id,
+        gm.join_status,
+        gm.contribution_points,
+        u.display_name,
+        gr.code AS role_code,
+        gr.name AS role_name,
+        gr.hierarchy_level,
+        gr.can_manage_guild
+      FROM guild_members gm
+      LEFT JOIN users u ON u.id = gm.user_id
+      LEFT JOIN guild_roles gr ON gr.id = gm.guild_role_id
+      WHERE gm.id = :memberId
+        AND gm.guild_id = :guildId
+        AND gm.join_status = 'active'
+      LIMIT 1
+      FOR UPDATE
+      `,
+      { guildId, memberId }
+    );
+
+    if (!targetRows.length) {
+      throw new ApiError(404, 'Không tìm thấy thành viên trong bang');
+    }
+
+    const targetMember = targetRows[0];
+
+    if (Number(targetMember.user_id) === Number(actorUserId)) {
+      throw new ApiError(400, 'Bạn không thể tự kick chính mình');
+    }
+
+    if (Boolean(targetMember.can_manage_guild) || targetMember.role_code === 'leader') {
+      throw new ApiError(403, 'Không thể kick bang chủ');
+    }
+
+    if (!canActOnTargetMember(actorMember, targetMember)) {
+      throw new ApiError(403, 'Bạn chỉ có thể kick thành viên có chức thấp hơn mình');
+    }
+
+    await conn.query(
+      `
+      UPDATE guild_members
+      SET join_status = 'kicked',
+          left_at = NOW()
+      WHERE id = :memberId
+      `,
+      { memberId }
+    );
+
+    await conn.query(
+      `
+      UPDATE users
+      SET current_guild_id = NULL,
+          updated_at = NOW()
+      WHERE id = :targetUserId
+        AND current_guild_id = :guildId
+      `,
+      { targetUserId: targetMember.user_id, guildId }
+    );
+
+    const roomId = await getGuildChatRoomIdWithConn(conn, guildId);
+    if (roomId) {
+      await conn.query(
+        `
+        UPDATE chat_room_members
+        SET is_active = 0
+        WHERE room_id = :roomId
+          AND user_id = :targetUserId
+        `,
+        { roomId, targetUserId: targetMember.user_id }
+      );
+    }
+
+    await conn.query(
+      `
+      INSERT INTO guild_logs (guild_id, user_id, action_type, target_user_id, details, created_at)
+      VALUES (:guildId, :actorUserId, 'kick', :targetUserId, :details, NOW())
+      `,
+      {
+        guildId,
+        actorUserId,
+        targetUserId: targetMember.user_id,
+        details: `Kick thành viên ${targetMember.display_name || targetMember.user_id} khỏi bang`,
+      }
+    );
+
+    return {
+      success: true,
+      member_id: Number(memberId),
+      user_id: Number(targetMember.user_id),
+      message: 'Đã kick thành viên khỏi bang',
+    };
+  });
+}
+
 async function updateGuildMemberRole({ guildId, memberId, actorUserId, roleCode }) {
   if (!actorUserId) {
     throw new ApiError(401, 'Không xác định được người dùng hiện tại');
@@ -2115,17 +2307,32 @@ async function updateGuildMemberRole({ guildId, memberId, actorUserId, roleCode 
       throw new ApiError(404, 'Không tìm thấy bang hội');
     }
 
-    const guild = guildRows[0];
-    if (Number(guild.leader_user_id) !== Number(actorUserId)) {
-      throw new ApiError(403, 'Chỉ bang chủ mới được nâng/hạ chức thành viên');
+    const actorMember = await getActiveGuildMember(guildId, actorUserId);
+    if (!actorMember) {
+      throw new ApiError(403, 'Bạn không thuộc bang hội này');
     }
+
+    if (!Boolean(actorMember.can_promote_members) && !Boolean(actorMember.can_manage_guild)) {
+      throw new ApiError(403, 'Bạn không có quyền nâng/hạ chức thành viên');
+    }
+
+    const guild = guildRows[0];
 
     const memberRows = await queryWithConn(
       conn,
       `
-      SELECT gm.id, gm.user_id, gm.guild_role_id, u.display_name
+      SELECT
+        gm.id,
+        gm.user_id,
+        gm.guild_role_id,
+        u.display_name,
+        gr.code AS role_code,
+        gr.name AS role_name,
+        gr.hierarchy_level,
+        gr.can_manage_guild
       FROM guild_members gm
       LEFT JOIN users u ON u.id = gm.user_id
+      LEFT JOIN guild_roles gr ON gr.id = gm.guild_role_id
       WHERE gm.id = :memberId
         AND gm.guild_id = :guildId
         AND gm.join_status = 'active'
@@ -2139,8 +2346,12 @@ async function updateGuildMemberRole({ guildId, memberId, actorUserId, roleCode 
     }
 
     const member = memberRows[0];
-    if (Number(member.user_id) === Number(guild.leader_user_id)) {
+    if (Number(member.user_id) === Number(guild.leader_user_id) || member.role_code === 'leader') {
       throw new ApiError(400, 'Không thể đổi chức vụ của bang chủ');
+    }
+
+    if (!canActOnTargetMember(actorMember, member)) {
+      throw new ApiError(403, 'Bạn chỉ có thể nâng/hạ chức thành viên có chức thấp hơn mình');
     }
 
     const roleRows = await queryWithConn(
@@ -2154,6 +2365,9 @@ async function updateGuildMemberRole({ guildId, memberId, actorUserId, roleCode 
     }
 
     const role = roleRows[0];
+    if (!Boolean(actorMember.can_manage_guild) && memberHierarchy(actorMember) >= Number(role.hierarchy_level || 9999)) {
+      throw new ApiError(403, 'Bạn không thể gán chức ngang hoặc cao hơn chức của mình');
+    }
 
     await conn.query(
       `
@@ -2611,6 +2825,7 @@ module.exports = {
   checkinGuild,
   contributeToGuild,
   updateGuild,
+  kickGuildMember,
   updateGuildMemberRole,
   updateGuildAnnouncement,
   donateToGuild,

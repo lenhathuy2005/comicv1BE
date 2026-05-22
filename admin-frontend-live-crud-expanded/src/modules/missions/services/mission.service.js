@@ -1,5 +1,6 @@
 const { query } = require('../../../config/database');
 const ApiError = require('../../../utils/ApiError');
+const cultivationService = require('../../cultivation/services/cultivation.service');
 
 async function ensureMissionExists(missionId) {
   const rows = await query(
@@ -381,32 +382,9 @@ async function grantMissionReward({ userId, mission }) {
   }
 
   if (rewardExp > 0) {
-    await query(
-      `
-      UPDATE user_cultivation
-      SET current_exp = current_exp + :rewardExp,
-          total_exp_earned = total_exp_earned + :rewardExp,
-          updated_at = NOW()
-      WHERE user_id = :userId
-      `,
-      { userId, rewardExp }
-    );
-
-    await query(
-      `
-      UPDATE user_cultivation uc
-      SET current_level_id = COALESCE((
-        SELECT l.id
-        FROM levels l
-        WHERE l.exp_required <= uc.current_exp
-        ORDER BY l.exp_required DESC
-        LIMIT 1
-      ), current_level_id),
-      updated_at = NOW()
-      WHERE uc.user_id = :userId
-      `,
-      { userId }
-    );
+    // Dùng service cảnh giới trung tâm để EXP nhiệm vụ cũng tự lên tầng 1-9
+    // và tự dừng ở tầng 10 chờ đột phá.
+    await cultivationService.addExpToUser(userId, rewardExp);
   }
 
   if (rewardItemId && rewardItemQty > 0) {

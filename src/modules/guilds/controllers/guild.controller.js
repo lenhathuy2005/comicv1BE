@@ -201,6 +201,17 @@ exports.updateGuildAnnouncement = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, data, 'Cập nhật thông báo bang thành công');
 });
 
+
+exports.kickGuildMember = asyncHandler(async (req, res) => {
+  const actorUserId = resolveCurrentUserId(req);
+  const data = await guildService.kickGuildMember({
+    guildId: req.params.id,
+    memberId: req.params.memberId,
+    actorUserId,
+  });
+  return ApiResponse.success(res, data, 'Kick thành viên thành công');
+});
+
 exports.updateGuildMemberRole = asyncHandler(async (req, res) => {
   const actorUserId = resolveCurrentUserId(req);
   const data = await guildService.updateGuildMemberRole({
