@@ -2,6 +2,17 @@ const ApiResponse = require('../../../utils/apiResponse');
 const asyncHandler = require('../../../utils/asyncHandler');
 const shopService = require('../services/shop.service');
 
+
+function withUploadedItemIcon(body = {}, file = null) {
+  const payload = { ...(body || {}) };
+
+  if (file) {
+    payload.icon_url = `/uploads/items/${file.filename}`;
+  }
+
+  return payload;
+}
+
 function resolveCurrentUserId(req) {
   return (
     req.user?.id ||
@@ -65,13 +76,13 @@ exports.listItemsAdmin = asyncHandler(async (_req, res) => {
 
 exports.createItemAdmin = asyncHandler(async (req, res) => {
   const actorUserId = resolveCurrentUserId(req);
-  const data = await shopService.createItemAdmin(req.body, actorUserId);
+  const data = await shopService.createItemAdmin(withUploadedItemIcon(req.body, req.file), actorUserId);
   return ApiResponse.success(res, data, 'Tạo item thành công', 201);
 });
 
 exports.updateItemAdmin = asyncHandler(async (req, res) => {
   const actorUserId = resolveCurrentUserId(req);
-  const data = await shopService.updateItemAdmin(req.params.id, req.body, actorUserId);
+  const data = await shopService.updateItemAdmin(req.params.id, withUploadedItemIcon(req.body, req.file), actorUserId);
   return ApiResponse.success(res, data, 'Cập nhật item thành công');
 });
 
@@ -85,12 +96,12 @@ exports.listShopItemsAdmin = asyncHandler(async (_req, res) => {
 });
 
 exports.createShopItemAdmin = asyncHandler(async (req, res) => {
-  const data = await shopService.createShopItemAdmin(req.body);
+  const data = await shopService.createShopItemAdmin(withUploadedItemIcon(req.body, req.file));
   return ApiResponse.success(res, data, 'Tạo shop item thành công', 201);
 });
 
 exports.updateShopItemAdmin = asyncHandler(async (req, res) => {
-  const data = await shopService.updateShopItemAdmin(req.params.id, req.body);
+  const data = await shopService.updateShopItemAdmin(req.params.id, withUploadedItemIcon(req.body, req.file));
   return ApiResponse.success(res, data, 'Cập nhật shop item thành công');
 });
 

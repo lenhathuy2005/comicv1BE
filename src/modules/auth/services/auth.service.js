@@ -1,6 +1,12 @@
 const { query, queryWithConn, transaction } = require('../../../config/database');
 const ApiError = require('../../../utils/ApiError');
 const { hashPassword, comparePassword } = require('../../../utils/password.util');
+const { randomInt } = require('crypto');
+const {
+  sendResetPasswordOtpEmail,
+  sendChangePasswordOtpEmail,
+} = require('../../../utils/mail.util');
+
 const {
   signAccessToken,
   signRefreshJwt,
@@ -41,6 +47,37 @@ async function storeAuthToken(conn, payload) {
     payload.metaJson ? JSON.stringify(payload.metaJson) : null,
   ]);
   return result.insertId;
+}
+
+async function setAuthTokenExpiryFromDbNow(conn, tokenId, minutes = 10) {
+  await conn.execute(
+    `UPDATE auth_tokens
+     SET expires_at = DATE_ADD(NOW(), INTERVAL ? MINUTE)
+     WHERE id = ?`,
+    [minutes, tokenId]
+  );
+}
+
+
+function normalizeOtp(value) {
+  return String(value || '').replace(/\D/g, '').trim();
+}
+
+function parseTokenMeta(tokenRow) {
+  if (!tokenRow) return {};
+  if (!tokenRow.meta_json) return {};
+  if (typeof tokenRow.meta_json === 'object') return tokenRow.meta_json;
+  try {
+    return JSON.parse(tokenRow.meta_json);
+  } catch (_) {
+    return {};
+  }
+}
+
+function tokenAgeMinutes(tokenRow) {
+  const raw = tokenRow?.age_minutes;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 999999;
 }
 
 async function register(data, context = {}) {
@@ -204,6 +241,8 @@ async function getCurrentUser(userId) {
 
 async function forgotPassword(email, context = {}) {
   return transaction(async (conn) => {
+    const cleanEmail = String(email || '').trim().toLowerCase();
+
     const users = await queryWithConn(
       conn,
       `SELECT id, email
@@ -211,11 +250,13 @@ async function forgotPassword(email, context = {}) {
        WHERE email = :email
          AND deleted_at IS NULL
        LIMIT 1`,
-      { email }
+      { email: cleanEmail }
     );
 
     if (!users.length) {
-      return { message: 'Nếu email tồn tại, hệ thống đã gửi hướng dẫn đặt lại mật khẩu' };
+      return {
+        message: 'Nếu email tồn tại, hệ thống đã gửi mã OTP đặt lại mật khẩu',
+      };
     }
 
     const user = users[0];
@@ -230,47 +271,114 @@ async function forgotPassword(email, context = {}) {
       [user.id]
     );
 
-    const resetToken = generateOpaqueToken('reset');
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const otp = String(randomInt(0, 1000000)).padStart(6, '0');
+    const resetToken = generateOpaqueToken('reset_otp');
 
-    await storeAuthToken(conn, {
+    // Dùng giờ của MySQL để tránh lỗi lệch timezone giữa Node/Windows và MySQL.
+    // Nếu dùng new Date(Date.now() + 10 phút), MySQL NOW() có thể coi OTP hết hạn ngay.
+    const resetTokenId = await storeAuthToken(conn, {
       userId: user.id,
       tokenType: 'reset_password',
       tokenValue: resetToken,
-      expiresAt,
+      expiresAt: null,
       ipAddress: context.ipAddress,
       userAgent: context.userAgent,
+      metaJson: {
+        purpose: 'forgot_password_otp',
+        email: cleanEmail,
+        otp,
+      },
     });
+    await setAuthTokenExpiryFromDbNow(conn, resetTokenId, 10);
+
+    try {
+      await sendResetPasswordOtpEmail({
+        to: cleanEmail,
+        otp,
+      });
+    } catch (error) {
+      throw new ApiError(
+        500,
+        'Không gửi được mã OTP qua email. Hãy kiểm tra SMTP_USER/SMTP_PASS trong .env và thử lại.'
+      );
+    }
 
     return {
-      message: 'Nếu email tồn tại, hệ thống đã gửi hướng dẫn đặt lại mật khẩu',
-      debugResetToken: resetToken,
+      message: 'Nếu email tồn tại, hệ thống đã gửi mã OTP đặt lại mật khẩu',
     };
   });
 }
 
-async function resetPassword(token, newPassword) {
+async function resetPassword(email, otp, newPassword) {
   return transaction(async (conn) => {
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanOtp = normalizeOtp(otp);
+
+    const users = await queryWithConn(
+      conn,
+      `SELECT id
+       FROM users
+       WHERE email = :email
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      { email: cleanEmail }
+    );
+
+    if (!users.length) {
+      throw new ApiError(400, 'OTP không hợp lệ hoặc đã hết hạn');
+    }
+
+    const user = users[0];
+
+    // Không lọc bằng expires_at ở SQL vì một số máy Windows/MySQL lệch timezone
+    // có thể làm OTP vừa gửi đã bị coi là hết hạn. Thay vào đó, lấy token mới
+    // và kiểm tra tuổi OTP bằng created_at của MySQL.
     const tokens = await queryWithConn(
       conn,
-      `SELECT *
+      `SELECT *, TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS age_minutes
        FROM auth_tokens
-       WHERE token_value = :token
+       WHERE user_id = :userId
          AND token_type = 'reset_password'
          AND used_at IS NULL
          AND revoked_at IS NULL
-         AND (expires_at IS NULL OR expires_at > NOW())
-       LIMIT 1`,
-      { token }
+       ORDER BY id DESC
+       LIMIT 10`,
+      { userId: user.id }
     );
 
-    if (!tokens.length) throw new ApiError(400, 'Reset token không hợp lệ hoặc đã hết hạn');
+    const matchedToken = tokens.find((tokenRow) => {
+      const meta = parseTokenMeta(tokenRow);
+      return (
+        meta.purpose === 'forgot_password_otp' &&
+        String(meta.email || '').trim().toLowerCase() === cleanEmail &&
+        normalizeOtp(meta.otp) === cleanOtp
+      );
+    });
 
-    const tokenRow = tokens[0];
+    if (!matchedToken) {
+      throw new ApiError(400, 'OTP không hợp lệ. Hãy bấm gửi lại mã OTP mới nhất và nhập đúng 6 số trong email mới nhất.');
+    }
+
+    if (tokenAgeMinutes(matchedToken) > 10) {
+      throw new ApiError(400, 'OTP đã hết hạn. Hãy bấm gửi lại mã OTP mới.');
+    }
+
     const passwordHash = await hashPassword(newPassword);
 
-    await conn.execute('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, tokenRow.user_id]);
-    await conn.execute('UPDATE auth_tokens SET used_at = NOW() WHERE id = ?', [tokenRow.id]);
+    await conn.execute(
+      `UPDATE users
+       SET password_hash = ?,
+           updated_at = NOW()
+       WHERE id = ?`,
+      [passwordHash, user.id]
+    );
+
+    await conn.execute(
+      `UPDATE auth_tokens
+       SET used_at = NOW()
+       WHERE id = ?`,
+      [matchedToken.id]
+    );
 
     await conn.execute(
       `UPDATE auth_tokens
@@ -278,10 +386,177 @@ async function resetPassword(token, newPassword) {
        WHERE user_id = ?
          AND token_type IN ('refresh_token', 'session_token')
          AND revoked_at IS NULL`,
-      [tokenRow.user_id]
+      [user.id]
     );
 
-    return { message: 'Đặt lại mật khẩu thành công' };
+    return {
+      message: 'Đặt lại mật khẩu thành công',
+    };
+  });
+}
+
+
+async function requestChangePasswordOtp(userId, context = {}) {
+  return transaction(async (conn) => {
+    const users = await queryWithConn(
+      conn,
+      `SELECT id, email, account_status
+       FROM users
+       WHERE id = :userId
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      { userId }
+    );
+
+    if (!users.length) throw new ApiError(404, 'Không tìm thấy tài khoản');
+
+    const user = users[0];
+    if (['banned', 'suspended'].includes(user.account_status)) {
+      throw new ApiError(403, 'Tài khoản đang bị khóa');
+    }
+
+    const cleanEmail = String(user.email || '').trim().toLowerCase();
+    if (!cleanEmail) throw new ApiError(400, 'Tài khoản chưa có email để gửi OTP');
+
+    await conn.execute(
+      `UPDATE auth_tokens
+       SET revoked_at = NOW()
+       WHERE user_id = ?
+         AND token_type = 'change_password_otp'
+         AND used_at IS NULL
+         AND revoked_at IS NULL`,
+      [user.id]
+    );
+
+    const otp = String(randomInt(0, 1000000)).padStart(6, '0');
+    const otpToken = generateOpaqueToken('change_otp');
+
+    // Dùng giờ của MySQL để tránh lỗi lệch timezone giữa Node/Windows và MySQL.
+    // Nếu dùng new Date(Date.now() + 10 phút), MySQL NOW() có thể coi OTP hết hạn ngay.
+    const otpTokenId = await storeAuthToken(conn, {
+      userId: user.id,
+      tokenType: 'change_password_otp',
+      tokenValue: otpToken,
+      expiresAt: null,
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      metaJson: {
+        purpose: 'change_password_otp',
+        email: cleanEmail,
+        otp,
+      },
+    });
+    await setAuthTokenExpiryFromDbNow(conn, otpTokenId, 10);
+
+    try {
+      await sendChangePasswordOtpEmail({
+        to: cleanEmail,
+        otp,
+      });
+    } catch (error) {
+      throw new ApiError(
+        500,
+        'Không gửi được mã OTP qua email. Hãy kiểm tra SMTP_USER/SMTP_PASS trong .env và thử lại.'
+      );
+    }
+
+    return {
+      email: cleanEmail,
+      message: 'Đã gửi mã OTP đổi mật khẩu về email của bạn',
+    };
+  });
+}
+
+async function confirmChangePasswordWithOtp(userId, otp, newPassword) {
+  return transaction(async (conn) => {
+    const cleanOtp = normalizeOtp(otp);
+    const cleanPassword = String(newPassword || '').trim();
+
+    if (!/^\d{6}$/.test(cleanOtp)) {
+      throw new ApiError(400, 'OTP phải gồm 6 số');
+    }
+
+    if (cleanPassword.length < 6) {
+      throw new ApiError(400, 'Mật khẩu mới phải có ít nhất 6 ký tự');
+    }
+
+    const users = await queryWithConn(
+      conn,
+      `SELECT id, email
+       FROM users
+       WHERE id = :userId
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      { userId }
+    );
+
+    if (!users.length) throw new ApiError(404, 'Không tìm thấy tài khoản');
+
+    const user = users[0];
+    const cleanEmail = String(user.email || '').trim().toLowerCase();
+
+    // Không lọc bằng expires_at ở SQL vì một số máy Windows/MySQL lệch timezone
+    // có thể làm OTP vừa gửi đã bị coi là hết hạn. Thay vào đó, lấy token mới
+    // và kiểm tra tuổi OTP bằng created_at của MySQL.
+    const tokens = await queryWithConn(
+      conn,
+      `SELECT *, TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS age_minutes
+       FROM auth_tokens
+       WHERE user_id = :userId
+         AND token_type = 'change_password_otp'
+         AND used_at IS NULL
+         AND revoked_at IS NULL
+       ORDER BY id DESC
+       LIMIT 10`,
+      { userId }
+    );
+
+    const matchedToken = tokens.find((tokenRow) => {
+      const meta = parseTokenMeta(tokenRow);
+      return (
+        meta.purpose === 'change_password_otp' &&
+        String(meta.email || '').trim().toLowerCase() === cleanEmail &&
+        normalizeOtp(meta.otp) === cleanOtp
+      );
+    });
+
+    if (!matchedToken) {
+      throw new ApiError(400, 'OTP không hợp lệ. Hãy bấm gửi lại mã OTP mới nhất và nhập đúng 6 số trong email mới nhất.');
+    }
+
+    if (tokenAgeMinutes(matchedToken) > 10) {
+      throw new ApiError(400, 'OTP đã hết hạn. Hãy bấm gửi lại mã OTP mới.');
+    }
+
+    const passwordHash = await hashPassword(cleanPassword);
+
+    await conn.execute(
+      `UPDATE users
+       SET password_hash = ?,
+           updated_at = NOW()
+       WHERE id = ?`,
+      [passwordHash, user.id]
+    );
+
+    await conn.execute(
+      `UPDATE auth_tokens
+       SET used_at = NOW()
+       WHERE id = ?`,
+      [matchedToken.id]
+    );
+
+    await conn.execute(
+      `UPDATE auth_tokens
+       SET revoked_at = NOW()
+       WHERE user_id = ?
+         AND token_type IN ('refresh_token', 'session_token')
+         AND revoked_at IS NULL`,
+      [user.id]
+    );
+
+    return {
+      message: 'Đổi mật khẩu thành công. Các phiên đăng nhập cũ đã bị thu hồi.',
+    };
   });
 }
 
@@ -522,6 +797,8 @@ module.exports = {
   getCurrentUser,
   forgotPassword,
   resetPassword,
+  requestChangePasswordOtp,
+  confirmChangePasswordWithOtp,
   refreshToken,
   logout,
   verifyEmail,

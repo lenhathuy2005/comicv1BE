@@ -1,6 +1,7 @@
 const express = require('express');
 const controller = require('../controllers/shop.controller');
 const { requireAuth, requireRole } = require('../../../middlewares/auth.middleware');
+const upload = require('../../../middlewares/upload.middleware');
 
 const router = express.Router();
 
@@ -70,8 +71,8 @@ router.delete('/admin/item-types/:id', requireAuth, requireRole('admin'), contro
 // =========================
 
 router.get('/admin/items', requireAuth, requireRole('admin'), controller.listItemsAdmin);
-router.post('/admin/items', requireAuth, requireRole('admin'), controller.createItemAdmin);
-router.put('/admin/items/:id', requireAuth, requireRole('admin'), controller.updateItemAdmin);
+router.post('/admin/items', requireAuth, requireRole('admin'), upload.single('icon_image'), controller.createItemAdmin);
+router.put('/admin/items/:id', requireAuth, requireRole('admin'), upload.single('icon_image'), controller.updateItemAdmin);
 router.delete('/admin/items/:id', requireAuth, requireRole('admin'), controller.deleteItemAdmin);
 
 // =========================
@@ -79,8 +80,8 @@ router.delete('/admin/items/:id', requireAuth, requireRole('admin'), controller.
 // =========================
 
 router.get('/admin/shop-items', requireAuth, requireRole('admin'), controller.listShopItemsAdmin);
-router.post('/admin/shop-items', requireAuth, requireRole('admin'), controller.createShopItemAdmin);
-router.put('/admin/shop-items/:id', requireAuth, requireRole('admin'), controller.updateShopItemAdmin);
+router.post('/admin/shop-items', requireAuth, requireRole('admin'), upload.single('icon_image'), controller.createShopItemAdmin);
+router.put('/admin/shop-items/:id', requireAuth, requireRole('admin'), upload.single('icon_image'), controller.updateShopItemAdmin);
 router.delete('/admin/shop-items/:id', requireAuth, requireRole('admin'), controller.deleteShopItemAdmin);
 router.get('/admin/transactions', requireAuth, requireRole('admin'), controller.listTransactionsAdmin);
 

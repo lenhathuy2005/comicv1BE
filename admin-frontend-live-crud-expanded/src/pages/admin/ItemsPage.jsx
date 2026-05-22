@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../../services/api';
+import { apiRequest, getImageUrl } from '../../services/api';
 import CrudModal from '../../components/CrudModal';
 import PageTitleBar from '../../components/PageTitleBar';
 import { StatCardsRow } from '../../components/StatCardsRow';
@@ -11,6 +11,9 @@ const emptyForm = {
   name: '',
   description: '',
   icon_url: '',
+  icon_image: null,
+  icon_preview: '',
+  item_usage_type: 'static',
   rarity: 'common',
   is_stackable: true,
   max_stack: 999,
@@ -153,6 +156,9 @@ export default function ItemsPage() {
       name: row.name || '',
       description: row.description || '',
       icon_url: row.icon_url || '',
+      icon_image: null,
+      icon_preview: row.icon_url ? getImageUrl(row.icon_url) : '',
+      item_usage_type: Number(row.usable_instantly) === 1 ? 'active' : 'static',
       rarity: row.rarity || 'common',
       is_stackable: Boolean(row.is_stackable),
       max_stack: row.max_stack || 999,
@@ -168,36 +174,50 @@ export default function ItemsPage() {
     setModalOpen(true);
   };
 
+  const handleIconImageChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    setForm((prev) => ({
+      ...prev,
+      icon_image: file,
+      icon_preview: file ? URL.createObjectURL(file) : prev.icon_preview,
+    }));
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = {
-        item_type_id: Number(form.item_type_id),
-        code: form.code,
-        name: form.name,
-        description: form.description || null,
-        icon_url: form.icon_url || null,
-        rarity: form.rarity,
-        is_stackable: boolToApi(form.is_stackable),
-        max_stack: Number(form.max_stack),
-        usable_instantly: boolToApi(form.usable_instantly),
-        equippable: boolToApi(form.equippable),
-        exp_bonus: Number(form.exp_bonus || 0),
-        power_bonus: Number(form.power_bonus || 0),
-        afk_bonus_percent: Number(form.afk_bonus_percent || 0),
-        vip_required_level: Number(form.vip_required_level || 0),
-        sellable: boolToApi(form.sellable),
-        is_active: boolToApi(form.is_active),
-      };
+      const payload = new FormData();
+      payload.append('item_type_id', String(Number(form.item_type_id)));
+      payload.append('code', form.code);
+      payload.append('name', form.name);
+      payload.append('description', form.description || '');
+      payload.append('rarity', form.rarity);
+      payload.append('is_stackable', String(boolToApi(form.is_stackable)));
+      payload.append('max_stack', String(Number(form.max_stack)));
+      payload.append('usable_instantly', form.item_usage_type === 'active' ? '1' : '0');
+      payload.append('equippable', String(boolToApi(form.equippable)));
+      payload.append('exp_bonus', String(Number(form.exp_bonus || 0)));
+      payload.append('power_bonus', String(Number(form.power_bonus || 0)));
+      payload.append('afk_bonus_percent', String(Number(form.afk_bonus_percent || 0)));
+      payload.append('vip_required_level', String(Number(form.vip_required_level || 0)));
+      payload.append('sellable', String(boolToApi(form.sellable)));
+      payload.append('is_active', String(boolToApi(form.is_active)));
+
+      if (form.icon_image) {
+        payload.append('icon_image', form.icon_image);
+      } else if (form.icon_url) {
+        payload.append('icon_url', form.icon_url);
+      }
+
       if (editingRow) {
         await apiRequest(`/api/shop/admin/items/${editingRow.id}`, {
           method: 'PUT',
-          body: JSON.stringify(payload),
+          body: payload,
         });
       } else {
         await apiRequest('/api/shop/admin/items', {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: payload,
         });
       }
       setModalOpen(false);
@@ -357,7 +377,19 @@ export default function ItemsPage() {
           </label>
           <label>Mã vật phẩm<input value={form.code} onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value }))} /></label>
           <label>Tên vật phẩm<input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} /></label>
-          <label>Đường dẫn icon<input value={form.icon_url} onChange={(e) => setForm((prev) => ({ ...prev, icon_url: e.target.value }))} /></label>
+          <label>
+            Ảnh vật phẩm
+            <input type="file" accept="image/*" onChange={handleIconImageChange} />
+            {form.icon_preview ? (
+              <img
+                src={form.icon_preview}
+                alt="Preview vật phẩm"
+                style={{ width: 76, height: 76, objectFit: 'cover', borderRadius: 14, marginTop: 8, border: '1px solid #d8dee9' }}
+              />
+            ) : (
+              <small>Chọn ảnh trực tiếp, không cần dán URL.</small>
+            )}
+          </label>
           <label>
             Độ hiếm
             <select value={form.rarity} onChange={(e) => setForm((prev) => ({ ...prev, rarity: e.target.value }))}>
@@ -374,7 +406,13 @@ export default function ItemsPage() {
           <label>AFK bonus %<input type="number" value={form.afk_bonus_percent} onChange={(e) => setForm((prev) => ({ ...prev, afk_bonus_percent: e.target.value }))} /></label>
           <label>VIP yêu cầu<input type="number" value={form.vip_required_level} onChange={(e) => setForm((prev) => ({ ...prev, vip_required_level: e.target.value }))} /></label>
           <label className="form-checkbox-inline"><input type="checkbox" checked={form.is_stackable} onChange={(e) => setForm((prev) => ({ ...prev, is_stackable: e.target.checked }))} /> Có thể cộng dồn</label>
-          <label className="form-checkbox-inline"><input type="checkbox" checked={form.usable_instantly} onChange={(e) => setForm((prev) => ({ ...prev, usable_instantly: e.target.checked }))} /> Dùng ngay</label>
+          <label>
+            Loại vật phẩm
+            <select value={form.item_usage_type} onChange={(e) => setForm((prev) => ({ ...prev, item_usage_type: e.target.value }))}>
+              <option value="active">Vật phẩm kích hoạt</option>
+              <option value="static">Vật phẩm tĩnh</option>
+            </select>
+          </label>
           <label className="form-checkbox-inline"><input type="checkbox" checked={form.equippable} onChange={(e) => setForm((prev) => ({ ...prev, equippable: e.target.checked }))} /> Có thể trang bị</label>
           <label className="form-checkbox-inline"><input type="checkbox" checked={form.sellable} onChange={(e) => setForm((prev) => ({ ...prev, sellable: e.target.checked }))} /> Có thể bán</label>
           <label className="form-checkbox-inline"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))} /> Kích hoạt</label>

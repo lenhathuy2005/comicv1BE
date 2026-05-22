@@ -59,11 +59,14 @@ async function getCultivationSummary(userId) {
       uc.last_breakthrough_at,
       l.id AS level_id,
       l.level_number,
-      l.name AS level_name,
+      l.exp_required,
+      nl.exp_required AS next_level_exp_required,
+      CONCAT('Cấp ', COALESCE(l.level_number, 1)) AS level_name,
       r.id AS realm_id,
       r.name AS realm_name
     FROM user_cultivation uc
     LEFT JOIN levels l ON l.id = uc.current_level_id
+    LEFT JOIN levels nl ON nl.level_number = l.level_number + 1
     LEFT JOIN realms r ON r.id = uc.current_realm_id
     WHERE uc.user_id = :userId
     LIMIT 1
@@ -222,6 +225,14 @@ async function getMyProfile(userId) {
           realm_name: cultivation.realm_name,
           current_exp: Number(cultivation.current_exp || 0),
           total_exp_earned: Number(cultivation.total_exp_earned || 0),
+          exp_required: Number(cultivation.exp_required || 0),
+          current_level_exp_required: Number(cultivation.exp_required || 0),
+          next_level_exp_required: Number(
+            cultivation.next_level_exp_required || cultivation.exp_required || 0
+          ),
+          exp_to_next_level: Number(
+            cultivation.next_level_exp_required || cultivation.exp_required || 0
+          ),
           breakthrough_count: Number(cultivation.breakthrough_count || 0),
           last_breakthrough_at: cultivation.last_breakthrough_at,
         }

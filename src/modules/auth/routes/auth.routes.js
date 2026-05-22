@@ -355,6 +355,8 @@ router.post('/refresh-token', refreshValidator, validate, authController.refresh
 router.post('/logout', requireAuth, authController.logout);
 
 router.post('/change-password', requireAuth, authController.changePassword);
+router.post('/change-password/request-otp', requireAuth, authController.requestChangePasswordOtp);
+router.post('/change-password/confirm-otp', requireAuth, authController.confirmChangePasswordWithOtp);
 router.get('/security', requireAuth, authController.securityOverview);
 router.post('/security/revoke-session', requireAuth, authController.revokeSession);
 router.post('/security/revoke-other-sessions', requireAuth, authController.revokeOtherSessions);

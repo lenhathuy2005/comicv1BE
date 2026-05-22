@@ -7,11 +7,34 @@ function normalizeBoolean(value, defaultValue = 0) {
   return 0;
 }
 
+function normalizeItemUsageType(value, currentUsable = 0) {
+  if (value === undefined || value === null || value === '') {
+    return normalizeBoolean(currentUsable, 0);
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (['active', 'activation', 'usable', 'use', 'kich_hoat', 'kích hoạt', '1', 'true'].includes(normalized)) {
+    return 1;
+  }
+
+  if (['static', 'passive', 'tinh', 'tĩnh', '0', 'false'].includes(normalized)) {
+    return 0;
+  }
+
+  throw new ApiError(400, 'Loại vật phẩm phải là kích hoạt hoặc tĩnh');
+}
+
 function normalizeNullableNumber(value) {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number(value);
   if (Number.isNaN(parsed)) return null;
   return parsed;
+}
+
+function normalizeNullableDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return value;
 }
 
 function normalizeRequiredNumber(value, fieldName) {
@@ -44,6 +67,7 @@ async function listShopItems() {
       si.price_premium,
       si.stock_quantity,
       si.daily_purchase_limit,
+      si.buy_once_per_user,
       si.vip_required_level,
       si.start_at,
       si.end_at,
@@ -56,6 +80,7 @@ async function listShopItems() {
       i.is_stackable,
       i.max_stack,
       i.usable_instantly,
+      CASE WHEN i.usable_instantly = 1 THEN 'active' ELSE 'static' END AS item_usage_type,
       i.equippable
     FROM shop_items si
     INNER JOIN items i ON i.id = si.item_id
@@ -109,6 +134,31 @@ async function buyItem({ userId, shopItemId, quantity = 1 }) {
 
     if (shopItem.stock_quantity !== null && Number(shopItem.stock_quantity) < quantity) {
       throw new ApiError(400, 'Số lượng tồn kho không đủ');
+    }
+
+    if (Number(shopItem.buy_once_per_user || 0) === 1) {
+      if (quantity > 1) {
+        throw new ApiError(400, 'Vật phẩm này chỉ được mua 1 lần duy nhất mỗi tài khoản');
+      }
+
+      const boughtRows = await queryWithConn(
+        conn,
+        `
+        SELECT COALESCE(SUM(quantity), 0) AS bought_count
+        FROM item_transactions
+        WHERE user_id = :userId
+          AND item_id = :itemId
+          AND transaction_type = 'buy_from_shop'
+        `,
+        {
+          userId,
+          itemId: shopItem.item_id,
+        }
+      );
+
+      if (Number(boughtRows[0]?.bought_count || 0) > 0) {
+        throw new ApiError(400, 'Tài khoản này đã mua vật phẩm này rồi. Vật phẩm chỉ được mua 1 lần duy nhất.');
+      }
     }
 
     const profileRows = await queryWithConn(
@@ -757,7 +807,12 @@ async function listShopItemsAdmin() {
     SELECT
       si.*,
       i.code AS item_code,
-      i.name AS item_name
+      i.name AS item_name,
+      i.description AS item_description,
+      i.icon_url,
+      i.rarity,
+      i.usable_instantly,
+      CASE WHEN i.usable_instantly = 1 THEN 'active' ELSE 'static' END AS item_usage_type
     FROM shop_items si
     INNER JOIN items i ON i.id = si.item_id
     ORDER BY si.id ASC
@@ -772,7 +827,10 @@ async function createShopItemAdmin(payload) {
     price_premium = 0,
     stock_quantity = null,
     daily_purchase_limit = null,
+    buy_once_per_user = 0,
     vip_required_level = 0,
+    item_usage_type = null,
+    icon_url = undefined,
     start_at = null,
     end_at = null,
     is_active = 1,
@@ -786,7 +844,7 @@ async function createShopItemAdmin(payload) {
     const itemRows = await queryWithConn(
       conn,
       `
-      SELECT id
+      SELECT id, icon_url, usable_instantly
       FROM items
       WHERE id = :itemId
       LIMIT 1
@@ -821,6 +879,7 @@ async function createShopItemAdmin(payload) {
         price_premium,
         stock_quantity,
         daily_purchase_limit,
+        buy_once_per_user,
         vip_required_level,
         start_at,
         end_at,
@@ -834,6 +893,7 @@ async function createShopItemAdmin(payload) {
         :price_premium,
         :stock_quantity,
         :daily_purchase_limit,
+        :buy_once_per_user,
         :vip_required_level,
         :start_at,
         :end_at,
@@ -848,17 +908,44 @@ async function createShopItemAdmin(payload) {
         price_premium: Number(price_premium || 0),
         stock_quantity: normalizeNullableNumber(stock_quantity),
         daily_purchase_limit: normalizeNullableNumber(daily_purchase_limit),
+        buy_once_per_user: normalizeBoolean(buy_once_per_user, 0),
         vip_required_level: normalizeRequiredNumber(vip_required_level, 'vip_required_level'),
-        start_at,
-        end_at,
+        start_at: normalizeNullableDate(start_at),
+        end_at: normalizeNullableDate(end_at),
         is_active: normalizeBoolean(is_active, 1),
       }
     );
 
+    const itemUpdatePayload = {
+      icon_url: icon_url !== undefined ? icon_url : itemRows[0].icon_url,
+      usable_instantly: normalizeItemUsageType(item_usage_type, itemRows[0].usable_instantly),
+      item_id,
+    };
+
+    if (icon_url !== undefined || item_usage_type !== null) {
+      await conn.query(
+        `
+        UPDATE items
+        SET icon_url = :icon_url,
+            usable_instantly = :usable_instantly,
+            updated_at = NOW()
+        WHERE id = :item_id
+        `,
+        itemUpdatePayload
+      );
+    }
+
     const rows = await queryWithConn(
       conn,
       `
-      SELECT si.*, i.code AS item_code, i.name AS item_name
+      SELECT
+        si.*,
+        i.code AS item_code,
+        i.name AS item_name,
+        i.icon_url,
+        i.rarity,
+        i.usable_instantly,
+        CASE WHEN i.usable_instantly = 1 THEN 'active' ELSE 'static' END AS item_usage_type
       FROM shop_items si
       INNER JOIN items i ON i.id = si.item_id
       WHERE si.id = :id
@@ -893,7 +980,10 @@ async function updateShopItemAdmin(id, payload) {
     price_premium: payload?.price_premium ?? current.price_premium,
     stock_quantity: payload?.stock_quantity ?? current.stock_quantity,
     daily_purchase_limit: payload?.daily_purchase_limit ?? current.daily_purchase_limit,
+    buy_once_per_user: payload?.buy_once_per_user ?? current.buy_once_per_user,
     vip_required_level: payload?.vip_required_level ?? current.vip_required_level,
+    item_usage_type: payload?.item_usage_type ?? null,
+    icon_url: payload?.icon_url,
     start_at: payload?.start_at ?? current.start_at,
     end_at: payload?.end_at ?? current.end_at,
     is_active: payload?.is_active ?? current.is_active,
@@ -901,7 +991,7 @@ async function updateShopItemAdmin(id, payload) {
 
   const itemRows = await query(
     `
-    SELECT id
+    SELECT id, icon_url, usable_instantly
     FROM items
     WHERE id = :itemId
     LIMIT 1
@@ -936,6 +1026,7 @@ async function updateShopItemAdmin(id, payload) {
         price_premium = :price_premium,
         stock_quantity = :stock_quantity,
         daily_purchase_limit = :daily_purchase_limit,
+        buy_once_per_user = :buy_once_per_user,
         vip_required_level = :vip_required_level,
         start_at = :start_at,
         end_at = :end_at,
@@ -950,16 +1041,41 @@ async function updateShopItemAdmin(id, payload) {
       price_premium: Number(next.price_premium || 0),
       stock_quantity: normalizeNullableNumber(next.stock_quantity),
       daily_purchase_limit: normalizeNullableNumber(next.daily_purchase_limit),
+      buy_once_per_user: normalizeBoolean(next.buy_once_per_user, 0),
       vip_required_level: normalizeRequiredNumber(next.vip_required_level, 'vip_required_level'),
-      start_at: next.start_at,
-      end_at: next.end_at,
+      start_at: normalizeNullableDate(next.start_at),
+      end_at: normalizeNullableDate(next.end_at),
       is_active: normalizeBoolean(next.is_active, 1),
     }
   );
 
+  if (next.icon_url !== undefined || next.item_usage_type !== null) {
+    await query(
+      `
+      UPDATE items
+      SET icon_url = COALESCE(:icon_url, icon_url),
+          usable_instantly = :usable_instantly,
+          updated_at = NOW()
+      WHERE id = :item_id
+      `,
+      {
+        item_id: normalizeRequiredNumber(next.item_id, 'item_id'),
+        icon_url: next.icon_url === undefined ? null : next.icon_url,
+        usable_instantly: normalizeItemUsageType(next.item_usage_type, itemRows[0].usable_instantly),
+      }
+    );
+  }
+
   const updated = await query(
     `
-    SELECT si.*, i.code AS item_code, i.name AS item_name
+    SELECT
+      si.*,
+      i.code AS item_code,
+      i.name AS item_name,
+      i.icon_url,
+      i.rarity,
+      i.usable_instantly,
+      CASE WHEN i.usable_instantly = 1 THEN 'active' ELSE 'static' END AS item_usage_type
     FROM shop_items si
     INNER JOIN items i ON i.id = si.item_id
     WHERE si.id = :id

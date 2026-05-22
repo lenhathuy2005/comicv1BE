@@ -13,6 +13,8 @@ function ensureDir(dirPath) {
 ensureDir(uploadRoot);
 ensureDir(path.join(uploadRoot, 'comics'));
 ensureDir(path.join(uploadRoot, 'chapters'));
+ensureDir(path.join(uploadRoot, 'items'));
+ensureDir(path.join(uploadRoot, 'guilds'));
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -20,8 +22,16 @@ const storage = multer.diskStorage({
       return cb(null, path.join(uploadRoot, 'comics'));
     }
 
-    if (file.fieldname === 'images') {
+    if (file.fieldname === 'images' || file.fieldname === 'image') {
       return cb(null, path.join(uploadRoot, 'chapters'));
+    }
+
+    if (file.fieldname === 'icon_image' || file.fieldname === 'item_icon') {
+      return cb(null, path.join(uploadRoot, 'items'));
+    }
+
+    if (file.fieldname === 'logo_image' || file.fieldname === 'guild_logo') {
+      return cb(null, path.join(uploadRoot, 'guilds'));
     }
 
     return cb(null, uploadRoot);

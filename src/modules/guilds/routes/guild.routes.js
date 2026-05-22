@@ -1,6 +1,7 @@
 const express = require('express');
 const controller = require('../controllers/guild.controller');
 const { requireAuth } = require('../../../middlewares/auth.middleware');
+const upload = require('../../../middlewares/upload.middleware');
 
 const router = express.Router();
 
@@ -26,7 +27,7 @@ router.post('/join-requests/:requestId/approve', requireAuth, controller.approve
 router.post('/join-requests/:requestId/reject', requireAuth, controller.rejectJoinRequest);
 router.post('/:id/donations', requireAuth, controller.donateToGuild);
 
-router.put('/:id', requireAuth, controller.updateGuild);
+router.put('/:id', requireAuth, upload.single('logo_image'), controller.updateGuild);
 router.put('/:id/members/:memberId/role', requireAuth, controller.updateGuildMemberRole);
 router.put('/:id/announcement', requireAuth, controller.updateGuildAnnouncement);
 

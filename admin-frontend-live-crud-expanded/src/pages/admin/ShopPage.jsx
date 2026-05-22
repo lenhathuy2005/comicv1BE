@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../../services/api';
+import { apiRequest, getImageUrl } from '../../services/api';
 import CrudModal from '../../components/CrudModal';
 import PageTitleBar from '../../components/PageTitleBar';
 import { StatCardsRow } from '../../components/StatCardsRow';
@@ -11,7 +11,11 @@ const emptyForm = {
   price_premium: 0,
   stock_quantity: '',
   daily_purchase_limit: '',
+  buy_once_per_user: false,
   vip_required_level: 0,
+  item_usage_type: 'static',
+  icon_image: null,
+  icon_preview: '',
   start_at: '',
   end_at: '',
   is_active: true,
@@ -156,7 +160,11 @@ export default function ShopPage() {
       price_premium: row.price_premium || 0,
       stock_quantity: row.stock_quantity ?? '',
       daily_purchase_limit: row.daily_purchase_limit ?? '',
+      buy_once_per_user: Boolean(Number(row.buy_once_per_user || 0)),
       vip_required_level: row.vip_required_level || 0,
+      item_usage_type: row.item_usage_type || (Number(row.usable_instantly) === 1 ? 'active' : 'static'),
+      icon_image: null,
+      icon_preview: row.icon_url ? getImageUrl(row.icon_url) : '',
       start_at: toDatetimeLocal(row.start_at),
       end_at: toDatetimeLocal(row.end_at),
       is_active: Boolean(row.is_active),
@@ -164,29 +172,44 @@ export default function ShopPage() {
     setModalOpen(true);
   };
 
+  const handleIconImageChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    setForm((prev) => ({
+      ...prev,
+      icon_image: file,
+      icon_preview: file ? URL.createObjectURL(file) : prev.icon_preview,
+    }));
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = {
-        item_id: Number(form.item_id),
-        price_gold: Number(form.price_gold || 0),
-        price_premium: Number(form.price_premium || 0),
-        stock_quantity: form.stock_quantity === '' ? null : Number(form.stock_quantity),
-        daily_purchase_limit: form.daily_purchase_limit === '' ? null : Number(form.daily_purchase_limit),
-        vip_required_level: Number(form.vip_required_level || 0),
-        start_at: form.start_at ? form.start_at.replace('T', ' ') + ':00' : null,
-        end_at: form.end_at ? form.end_at.replace('T', ' ') + ':00' : null,
-        is_active: form.is_active ? 1 : 0,
-      };
+      const payload = new FormData();
+      payload.append('item_id', String(Number(form.item_id)));
+      payload.append('price_gold', String(Number(form.price_gold || 0)));
+      payload.append('price_premium', String(Number(form.price_premium || 0)));
+      payload.append('stock_quantity', form.stock_quantity === '' ? '' : String(Number(form.stock_quantity)));
+      payload.append('daily_purchase_limit', form.daily_purchase_limit === '' ? '' : String(Number(form.daily_purchase_limit)));
+      payload.append('buy_once_per_user', form.buy_once_per_user ? '1' : '0');
+      payload.append('vip_required_level', String(Number(form.vip_required_level || 0)));
+      payload.append('item_usage_type', form.item_usage_type || 'static');
+      payload.append('start_at', form.start_at ? form.start_at.replace('T', ' ') + ':00' : '');
+      payload.append('end_at', form.end_at ? form.end_at.replace('T', ' ') + ':00' : '');
+      payload.append('is_active', form.is_active ? '1' : '0');
+
+      if (form.icon_image) {
+        payload.append('icon_image', form.icon_image);
+      }
+
       if (editingRow) {
         await apiRequest(`/api/shop/admin/shop-items/${editingRow.id}`, {
           method: 'PUT',
-          body: JSON.stringify(payload),
+          body: payload,
         });
       } else {
         await apiRequest('/api/shop/admin/shop-items', {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: payload,
         });
       }
       setModalOpen(false);
@@ -255,7 +278,7 @@ export default function ShopPage() {
               <div className="readdy-product-thumb-wrap">
                 <span className={`readdy-chip ${rarityChipClass(row.rarity)} readdy-product-rarity`}>{rarityLabel(row.rarity)}</span>
                 {row.icon_url ? (
-                  <img className="readdy-product-thumb" src={row.icon_url} alt={row.item_name} />
+                  <img className="readdy-product-thumb" src={getImageUrl(row.icon_url)} alt={row.item_name} />
                 ) : (
                   <div className="readdy-product-thumb placeholder">✦</div>
                 )}
@@ -280,6 +303,12 @@ export default function ShopPage() {
                   <span>Đã bán: {formatNumber(row.soldQuantity)}</span>
                   <span className={`readdy-chip ${Number(row.is_active) === 1 ? 'chip-green' : 'chip-gray'}`}>
                     {Number(row.is_active) === 1 ? 'Đang bán' : 'Đã ẩn'}
+                  </span>
+                  <span className={`readdy-chip ${Number(row.buy_once_per_user || 0) === 1 ? 'chip-purple' : 'chip-gray'}`}>
+                    {Number(row.buy_once_per_user || 0) === 1 ? 'Mua 1 lần' : 'Mua nhiều lần'}
+                  </span>
+                  <span className={`readdy-chip ${row.item_usage_type === 'active' ? 'chip-blue' : 'chip-gray'}`}>
+                    {row.item_usage_type === 'active' ? 'Kích hoạt' : 'Tĩnh'}
                   </span>
                 </div>
 
@@ -307,18 +336,47 @@ export default function ShopPage() {
         <div className="form-grid-two">
           <label>
             Vật phẩm
-            <select name="item_id" value={form.item_id} onChange={(e) => setForm((prev) => ({ ...prev, item_id: e.target.value }))}>
+            <select name="item_id" value={form.item_id} onChange={(e) => {
+              const selectedItem = items.find((item) => String(item.id) === String(e.target.value));
+              setForm((prev) => ({
+                ...prev,
+                item_id: e.target.value,
+                icon_preview: selectedItem?.icon_url ? getImageUrl(selectedItem.icon_url) : prev.icon_preview,
+                item_usage_type: selectedItem ? (Number(selectedItem.usable_instantly) === 1 ? 'active' : 'static') : prev.item_usage_type,
+              }));
+            }}>
               <option value="">Chọn vật phẩm</option>
               {items.map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
               ))}
             </select>
           </label>
+          <label>
+            Ảnh vật phẩm
+            <input type="file" accept="image/*" onChange={handleIconImageChange} />
+            {form.icon_preview ? (
+              <img
+                src={form.icon_preview}
+                alt="Preview vật phẩm"
+                style={{ width: 76, height: 76, objectFit: 'cover', borderRadius: 14, marginTop: 8, border: '1px solid #d8dee9' }}
+              />
+            ) : (
+              <small>Chọn ảnh mới để thay ảnh vật phẩm trong shop.</small>
+            )}
+          </label>
           <label>Giá vàng<input type="number" value={form.price_gold} onChange={(e) => setForm((prev) => ({ ...prev, price_gold: e.target.value }))} /></label>
           <label>Giá premium<input type="number" value={form.price_premium} onChange={(e) => setForm((prev) => ({ ...prev, price_premium: e.target.value }))} /></label>
           <label>Tồn kho<input type="number" value={form.stock_quantity} onChange={(e) => setForm((prev) => ({ ...prev, stock_quantity: e.target.value }))} /></label>
           <label>Giới hạn mua/ngày<input type="number" value={form.daily_purchase_limit} onChange={(e) => setForm((prev) => ({ ...prev, daily_purchase_limit: e.target.value }))} /></label>
+          <label className="form-checkbox-inline"><input type="checkbox" checked={form.buy_once_per_user} onChange={(e) => setForm((prev) => ({ ...prev, buy_once_per_user: e.target.checked }))} /> Mỗi tài khoản chỉ mua 1 lần</label>
           <label>VIP yêu cầu<input type="number" value={form.vip_required_level} onChange={(e) => setForm((prev) => ({ ...prev, vip_required_level: e.target.value }))} /></label>
+          <label>
+            Loại vật phẩm
+            <select value={form.item_usage_type} onChange={(e) => setForm((prev) => ({ ...prev, item_usage_type: e.target.value }))}>
+              <option value="active">Vật phẩm kích hoạt</option>
+              <option value="static">Vật phẩm tĩnh</option>
+            </select>
+          </label>
           <label>Bắt đầu bán<input type="datetime-local" value={form.start_at} onChange={(e) => setForm((prev) => ({ ...prev, start_at: e.target.value }))} /></label>
           <label>Kết thúc bán<input type="datetime-local" value={form.end_at} onChange={(e) => setForm((prev) => ({ ...prev, end_at: e.target.value }))} /></label>
           <label className="form-checkbox-inline"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))} /> Đang kích hoạt</label>

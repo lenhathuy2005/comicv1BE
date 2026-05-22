@@ -50,10 +50,21 @@ const forgotPasswordValidator = [
 ];
 
 const resetPasswordValidator = [
-  body('token')
+  body('email')
     .trim()
     .notEmpty()
-    .withMessage('Token là bắt buộc'),
+    .withMessage('Email là bắt buộc')
+    .isEmail()
+    .withMessage('Email không hợp lệ'),
+
+  body('otp')
+    .trim()
+    .notEmpty()
+    .withMessage('OTP là bắt buộc')
+    .isLength({ min: 6, max: 6 })
+    .withMessage('OTP phải gồm 6 số')
+    .isNumeric()
+    .withMessage('OTP chỉ được chứa số'),
 
   body('newPassword')
     .notEmpty()

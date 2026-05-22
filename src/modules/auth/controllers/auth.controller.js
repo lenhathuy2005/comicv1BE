@@ -30,8 +30,29 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
 });
 
 exports.resetPassword = asyncHandler(async (req, res) => {
-  const data = await authService.resetPassword(req.body.token, req.body.newPassword);
+  const data = await authService.resetPassword(
+    req.body.email,
+    req.body.otp,
+    req.body.newPassword
+  );
+
   return ApiResponse.success(res, data, 'Đặt lại mật khẩu thành công');
+});
+
+
+exports.requestChangePasswordOtp = asyncHandler(async (req, res) => {
+  const data = await authService.requestChangePasswordOtp(req.user.id, clientContext(req));
+  return ApiResponse.success(res, data, 'Đã gửi mã OTP đổi mật khẩu');
+});
+
+exports.confirmChangePasswordWithOtp = asyncHandler(async (req, res) => {
+  const data = await authService.confirmChangePasswordWithOtp(
+    req.user.id,
+    req.body.otp,
+    req.body.newPassword
+  );
+
+  return ApiResponse.success(res, data, 'Đổi mật khẩu thành công');
 });
 
 exports.refreshToken = asyncHandler(async (req, res) => {

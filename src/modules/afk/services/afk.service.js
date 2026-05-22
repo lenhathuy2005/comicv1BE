@@ -34,9 +34,9 @@ const DEFAULT_AFK_CONFIGS = [
   },
   {
     config_key: 'afk_min_minutes_to_claim',
-    config_value: '1',
+    config_value: '0',
     value_type: 'int',
-    description: 'Số phút tối thiểu cần AFK để được nhận thưởng',
+    description: 'Số phút tối thiểu cần AFK để được nhận thưởng. 0 nghĩa là AFK bao lâu cũng nhận được.',
   },
   {
     config_key: 'afk_max_minutes_per_session',
@@ -223,7 +223,16 @@ async function getRunningSession(userId) {
     SELECT *
     FROM afk_sessions
     WHERE user_id = :userId
-      AND session_status = 'running'
+      AND (
+        session_status = 'running'
+        OR (
+          session_status = 'finished'
+          AND claim_status = 'pending'
+        )
+      )
+    ORDER BY
+      CASE WHEN session_status = 'running' THEN 0 ELSE 1 END ASC,
+      id DESC
     LIMIT 1
     `,
     { userId }
@@ -266,6 +275,80 @@ async function getUserCultivation(userId, conn = null) {
     : await query(sql, { userId });
 
   return rows[0] || null;
+}
+
+async function ensureUserProfileRewardRow(userId, claimedGold, conn) {
+  await conn.query(
+    `
+    INSERT INTO user_profiles (
+      user_id,
+      gold_balance,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      :userId,
+      :claimedGold,
+      NOW(),
+      NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+      gold_balance = gold_balance + VALUES(gold_balance),
+      updated_at = NOW()
+    `,
+    {
+      userId,
+      claimedGold,
+    }
+  );
+}
+
+async function refreshUserLevelByExp(userId, conn) {
+  const rows = await queryWithConn(
+    conn,
+    `
+    SELECT current_exp
+    FROM user_cultivation
+    WHERE user_id = :userId
+    LIMIT 1
+    `,
+    { userId }
+  );
+
+  const currentExp = Number(rows[0]?.current_exp || 0);
+
+  const levelRows = await queryWithConn(
+    conn,
+    `
+    SELECT id
+    FROM levels
+    ORDER BY
+      CASE WHEN exp_required <= :currentExp THEN 0 ELSE 1 END ASC,
+      CASE WHEN exp_required <= :currentExp THEN exp_required END DESC,
+      exp_required ASC,
+      level_number ASC
+    LIMIT 1
+    `,
+    { currentExp }
+  );
+
+  const nextLevelId = Number(levelRows[0]?.id || 0);
+
+  if (nextLevelId <= 0) return;
+
+  await conn.query(
+    `
+    UPDATE user_cultivation
+    SET current_level_id = :nextLevelId,
+        updated_at = NOW()
+    WHERE user_id = :userId
+      AND current_level_id <> :nextLevelId
+    `,
+    {
+      userId,
+      nextLevelId,
+    }
+  );
 }
 
 async function getUserVipBonusPercent(userId, conn, configMap) {
@@ -638,7 +721,7 @@ async function claimSession(userId, sessionId) {
 
     const minMinutesToClaim =
       extractNumericFromConfigValue(
-        configMap.afk_min_minutes_to_claim ?? 1,
+        configMap.afk_min_minutes_to_claim ?? 0,
         {
           preferredKeys: [
             'min_minutes_to_claim',
@@ -646,11 +729,11 @@ async function claimSession(userId, sessionId) {
             'minutes',
           ],
         }
-      ) ?? 1;
+      ) ?? 0;
 
-    const requiredSeconds = Math.floor(minMinutesToClaim * 60);
+    const requiredSeconds = Math.max(0, Math.floor(minMinutesToClaim * 60));
 
-    if (Number(session.duration_seconds || 0) < requiredSeconds) {
+    if (requiredSeconds > 0 && Number(session.duration_seconds || 0) < requiredSeconds) {
       throw new ApiError(
         400,
         `Cần AFK tối thiểu ${minMinutesToClaim} phút để nhận thưởng`
@@ -680,18 +763,9 @@ async function claimSession(userId, sessionId) {
       }
     );
 
-    await conn.query(
-      `
-      UPDATE user_profiles
-      SET gold_balance = gold_balance + :claimedGold,
-          updated_at = NOW()
-      WHERE user_id = :userId
-      `,
-      {
-        claimedGold,
-        userId,
-      }
-    );
+    await refreshUserLevelByExp(userId, conn);
+
+    await ensureUserProfileRewardRow(userId, claimedGold, conn);
 
     await conn.query(
       `
