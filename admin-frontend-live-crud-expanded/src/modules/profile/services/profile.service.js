@@ -249,9 +249,12 @@ async function getMyProfile(userId) {
           next_level_exp_required: Number(
             cultivation.next_level_exp_required || cultivation.exp_required || 0
           ),
-          exp_to_next_level: Number(
-            cultivation.next_level_exp_required || cultivation.exp_required || 0
-          ),
+          // Thanh EXP hiện tại phải dùng exp_required của cấp/tầng hiện tại.
+          // next_level_exp_required chỉ là thông tin tham khảo cho cấp sau.
+          exp_to_next_level: Number(cultivation.exp_required || 0),
+          current_realm_name: cultivation.realm_name,
+          current_stage_name: cultivation.stage_name,
+          current_stage_number: cultivation.stage_number != null ? Number(cultivation.stage_number) : null,
           breakthrough_count: Number(cultivation.breakthrough_count || 0),
           last_breakthrough_at: cultivation.last_breakthrough_at,
           power_points: Number(cultivation.power_points || 0),
