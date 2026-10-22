@@ -1,0 +1,117 @@
+.primary-btn,
+.secondary-btn,
+.ghost-btn,
+.danger-btn,
+.teal-btn,
+.mini-btn {
+  transition: 0.2s ease;
+}
+
+.primary-btn {
+  width: 100%;
+  border: none;
+  background: linear-gradient(135deg, #1d4ed8, #0f766e);
+  color: white;
+  padding: 12px 16px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-weight: 800;
+  box-shadow: 0 14px 30px rgba(15, 118, 110, 0.18);
+}
+
+.primary-btn:hover,
+.teal-btn:hover {
+  transform: translateY(-1px);
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled,
+.ghost-btn:disabled,
+.danger-btn:disabled,
+.teal-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.secondary-btn {
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-weight: 700;
+  box-shadow: var(--shadow-xs);
+}
+
+.secondary-btn:hover,
+.ghost-btn:hover,
+.danger-btn:hover,
+.mini-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.ghost-btn {
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: rgba(255, 255, 255, 0.65);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.danger-btn {
+  border: 1px solid rgba(248, 113, 113, 0.26);
+  background: rgba(254, 242, 242, 0.95);
+  color: #b91c1c;
+  padding: 10px 14px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.teal-btn {
+  border: none;
+  background: linear-gradient(135deg, #14b8a6, #0f766e);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-weight: 700;
+  box-shadow: 0 14px 30px rgba(20, 184, 166, 0.22);
+}
+
+.logout-btn {
+  width: 100%;
+  border: none;
+  background: rgba(239, 68, 68, 0.16);
+  color: #fecaca;
+  padding: 11px 12px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mini-btn {
+  border: 1px solid var(--border);
+  background: white;
+  padding: 7px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mini-btn-active {
+  background: linear-gradient(135deg, #1d4ed8, #0f766e);
+  color: white;
+  border-color: transparent;
+}

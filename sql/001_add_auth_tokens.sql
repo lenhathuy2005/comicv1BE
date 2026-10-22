@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS auth_tokens (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  token_type ENUM('verify_email','reset_password','refresh_token','session_token') NOT NULL,
+  token_value VARCHAR(255) NOT NULL,
+  expires_at DATETIME DEFAULT NULL,
+  used_at DATETIME DEFAULT NULL,
+  revoked_at DATETIME DEFAULT NULL,
+  ip_address VARCHAR(64) DEFAULT NULL,
+  user_agent VARCHAR(255) DEFAULT NULL,
+  meta_json LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(meta_json)),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_auth_tokens_value (token_value),
+  KEY idx_auth_tokens_user_id (user_id),
+  KEY idx_auth_tokens_type (token_type),
+  KEY idx_auth_tokens_expires_at (expires_at),
+  CONSTRAINT fk_auth_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
